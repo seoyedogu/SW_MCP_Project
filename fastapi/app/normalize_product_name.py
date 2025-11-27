@@ -1,7 +1,8 @@
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
-# 제품명 -> 모델명 매핑 저장용 변수 (메모리에 저장)
-product_name_to_model: dict[str, str] = {}
+# 제품명 -> 모델명 및 URL 매핑 저장용 변수 (메모리에 저장)
+# 구조: {"제품명": {"model": "모델명", "url": "URL"}}
+product_name_to_model: dict[str, dict[str, str]] = {}
 
 
 def normalize_search_keyword(product_name: str) -> list[str]:
@@ -54,15 +55,15 @@ def normalize_search_keyword(product_name: str) -> list[str]:
     return result
 
 
-def search_danawa_and_extract_model(search_keyword: str) -> str | None:
+def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | None:
     """
-    다나와에서 검색하여 모델명을 추출하는 함수
+    다나와에서 검색하여 모델명과 URL을 추출하는 함수
     
     Args:
         search_keyword: 검색 키워드
     
     Returns:
-        모델명 또는 None
+        {"model": "모델명", "url": "URL"} 또는 None
     """
     import re
     import urllib.parse
@@ -103,6 +104,9 @@ def search_danawa_and_extract_model(search_keyword: str) -> str | None:
                     return None
                 if product_url.startswith("/info"):
                     product_url = "http://prod.danawa.com" + product_url
+                
+                # 전체 URL 저장
+                full_product_url = product_url
 
                 page.goto(product_url, timeout=15000, wait_until="domcontentloaded")
 
@@ -150,7 +154,9 @@ def search_danawa_and_extract_model(search_keyword: str) -> str | None:
                         if matches:
                             model_name = matches[0]
 
-                return model_name if model_name else None
+                if model_name:
+                    return {"model": model_name, "url": full_product_url}
+                return None
             finally:
                 if context is not None:
                     try:
@@ -170,11 +176,11 @@ def search_danawa_and_extract_model(search_keyword: str) -> str | None:
     return None
 
 
-def convert_product_name_to_model(product_name: str) -> str | None:
+def convert_product_name_to_model(product_name: str) -> dict[str, str] | None:
     """
-    제품 이름을 모델명으로 변환하는 함수 (다나와에서 자동 검색)
+    제품 이름을 모델명과 URL로 변환하는 함수 (다나와에서 자동 검색)
     
-    다나와에서 제품명으로 검색하여 첫 번째 결과의 모델명을 추출합니다.
+    다나와에서 제품명으로 검색하여 첫 번째 결과의 모델명과 URL을 추출합니다.
     이미 저장된 매핑이 있으면 그것을 우선적으로 사용합니다.
     검색 결과가 없을 경우 키워드 변형을 시도합니다.
     
@@ -182,7 +188,7 @@ def convert_product_name_to_model(product_name: str) -> str | None:
         product_name: 제품 이름 (예: "삼성 블루스카이 5500")
     
     Returns:
-        모델명 (예: "AX060CG500G") 또는 None
+        {"model": "모델명", "url": "URL"} (예: {"model": "AX060CG500G", "url": "http://..."}) 또는 None
     """
     # 먼저 저장된 매핑에서 확인 (캐시된 결과 우선 사용)
     if product_name in product_name_to_model:
@@ -198,9 +204,9 @@ def convert_product_name_to_model(product_name: str) -> str | None:
     
     # 각 키워드로 검색 시도
     for keyword in search_keywords:
-        model_name = search_danawa_and_extract_model(keyword)
-        if model_name:
-            return model_name
+        result = search_danawa_and_extract_model(keyword)
+        if result:
+            return result
     
     # 모든 키워드로 검색해도 실패한 경우
     return None

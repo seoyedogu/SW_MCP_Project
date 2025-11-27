@@ -1,2 +1,5 @@
 __pycache__/
 *.pyc
+
+# 다운로드된 이미지 파일
+downloads/

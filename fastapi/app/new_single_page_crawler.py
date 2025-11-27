@@ -22,6 +22,7 @@ single_page_image_crawler.py
 import asyncio
 import os
 import re
+import sys
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -72,40 +73,174 @@ async def collect_images(page, container_sel="[id^='partContents_']", img_sel="i
     return img_urls
 
 
-#실질적인 크롤링 함수
-async def crawl_single_page(url: str, outdir: str):
-    Path(outdir).mkdir(parents=True, exist_ok=True)
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(user_agent=DEFAULT_UA)
-        page = await context.new_page()
-
-        print(f"[open] {url}")
-        await page.goto(url, wait_until="networkidle", timeout=20000)
-
-        imgs = await collect_images(page)
-        print(f"[found] {len(imgs)} images")
-
-        for idx, img_url in enumerate(imgs, start=1):
+# 내부 크롤링 함수 (별도 이벤트 루프에서 실행)
+async def _crawl_single_page_internal(url: str, outdir: str):
+    """
+    실제 크롤링 로직을 수행하는 내부 함수
+    
+    Args:
+        url: 크롤링할 페이지 URL
+        outdir: 이미지를 저장할 디렉토리 경로 (절대 경로)
+    
+    Raises:
+        Exception: 크롤링 중 오류 발생 시
+    """
+    browser = None
+    context = None
+    page = None
+    imgs = []
+    
+    try:
+        # Playwright를 context manager로 사용하여 자동 정리 보장
+        async with async_playwright() as p:
             try:
-                ext = (os.path.splitext(img_url)[1] or ".jpg").lower()
-                filename = f"result_{idx:03d}{ext}"
-                filepath = Path(outdir) / filename
-
-                headers = {"User-Agent": DEFAULT_UA, "Referer": url}
-                r = requests.get(img_url, headers=headers, timeout=15)
-                r.raise_for_status()
-                filepath.write_bytes(r.content)
-
-                print(f"  [saved] {filename}")
+                browser = await p.chromium.launch(headless=True)
             except Exception as e:
-                print(f"  [ERROR] {img_url} - {e}")
+                raise Exception(f"브라우저 실행 실패: {str(e)}")
+            
+            try:
+                context = await browser.new_context(user_agent=DEFAULT_UA)
+                page = await context.new_page()
+            except Exception as e:
+                raise Exception(f"브라우저 컨텍스트 생성 실패: {str(e)}")
 
-        await context.close()
-        await browser.close()
+            try:
+                print(f"[open] {url}")
+                # networkidle이 너무 엄격할 수 있으므로 domcontentloaded로 먼저 시도
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                    # 페이지가 완전히 로드될 때까지 추가 대기
+                    await page.wait_for_timeout(2000)
+                except Exception:
+                    # domcontentloaded 실패 시 load로 시도
+                    await page.goto(url, wait_until="load", timeout=30000)
+                    await page.wait_for_timeout(2000)
+            except Exception as e:
+                raise Exception(f"페이지 로딩 실패 (URL: {url}): {str(e)}")
 
-    print(f"[done] saved {len(imgs)} images to {outdir}")
+            try:
+                imgs = await collect_images(page)
+                print(f"[found] {len(imgs)} images")
+            except Exception as e:
+                raise Exception(f"이미지 수집 실패: {str(e)}")
+
+            # 이미지가 없는 경우에도 정상적으로 처리
+            if len(imgs) == 0:
+                print(f"[warning] 이미지를 찾을 수 없습니다. 선택자 '[id^=\"partContents_\"]' 내에 이미지가 없을 수 있습니다.")
+
+            for idx, img_url in enumerate(imgs, start=1):
+                try:
+                    ext = (os.path.splitext(img_url)[1] or ".jpg").lower()
+                    filename = f"result_{idx:03d}{ext}"
+                    filepath = Path(outdir) / filename
+
+                    headers = {"User-Agent": DEFAULT_UA, "Referer": url}
+                    r = requests.get(img_url, headers=headers, timeout=15)
+                    r.raise_for_status()
+                    filepath.write_bytes(r.content)
+
+                    print(f"  [saved] {filename}")
+                except Exception as e:
+                    print(f"  [ERROR] {img_url} - {e}")
+                    # 개별 이미지 다운로드 실패는 계속 진행
+
+            # 브라우저 정리 (context manager가 자동으로 정리하지만 명시적으로도 정리)
+            if page:
+                try:
+                    await page.close()
+                except Exception:
+                    pass
+            if context:
+                try:
+                    await context.close()
+                except Exception:
+                    pass
+            if browser:
+                try:
+                    await browser.close()
+                except Exception:
+                    pass
+
+        print(f"[done] saved {len(imgs)} images to {outdir}")
+        
+    except Exception as e:
+        # 추가 정리 작업
+        if page:
+            try:
+                await page.close()
+            except Exception:
+                pass
+        if context:
+            try:
+                await context.close()
+            except Exception:
+                pass
+        if browser:
+            try:
+                await browser.close()
+            except Exception:
+                pass
+        # 예외를 다시 발생시켜서 상위에서 처리하도록
+        raise
+
+
+#실질적인 크롤링 함수 (Windows 이벤트 루프 문제 해결)
+async def crawl_single_page(url: str, outdir: str):
+    """
+    단일 페이지에서 이미지를 크롤링하는 함수
+    Windows에서 이벤트 루프 문제를 해결하기 위해 별도 스레드에서 실행
+    
+    Args:
+        url: 크롤링할 페이지 URL
+        outdir: 이미지를 저장할 디렉토리 경로
+    
+    Raises:
+        Exception: 크롤링 중 오류 발생 시
+    """
+    try:
+        # 절대 경로로 변환하여 경로 문제 방지
+        outdir_path = Path(outdir).resolve()
+        outdir_path.mkdir(parents=True, exist_ok=True)
+        outdir = str(outdir_path)
+    except Exception as e:
+        raise Exception(f"디렉토리 생성 실패: {outdir} - {str(e)}")
+
+    # Windows에서 이벤트 루프 문제 해결: 별도 스레드에서 새 이벤트 루프 생성
+    if sys.platform == "win32":
+        import concurrent.futures
+        
+        def run_in_new_loop():
+            """새 이벤트 루프에서 크롤링 실행"""
+            # Windows에서는 ProactorEventLoop를 명시적으로 사용
+            if sys.version_info >= (3, 8):
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+            else:
+                loop = asyncio.new_event_loop()
+            
+            try:
+                loop.run_until_complete(_crawl_single_page_internal(url, outdir))
+            except Exception as e:
+                # 예외를 다시 발생시켜서 상위로 전파
+                raise
+            finally:
+                try:
+                    # 남은 작업 완료
+                    pending = asyncio.all_tasks(loop)
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                except Exception:
+                    pass
+                finally:
+                    loop.close()
+        
+        # 별도 스레드에서 실행
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(run_in_new_loop)
+            future.result()  # 결과 대기 (예외도 전파됨)
+    else:
+        # Windows가 아닌 경우 현재 이벤트 루프에서 실행
+        await _crawl_single_page_internal(url, outdir)
 
 
 if __name__ == "__main__":

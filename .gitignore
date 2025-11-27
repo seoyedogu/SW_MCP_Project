@@ -3,3 +3,7 @@ __pycache__/
 
 # 다운로드된 이미지 파일
 downloads/
+
+# 테스트 파일
+test_*.py
+test_*.sh

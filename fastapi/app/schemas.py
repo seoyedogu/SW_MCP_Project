@@ -16,14 +16,18 @@ class ProductNameToModelMappingsResponse(BaseModel):
 
 class CrawlRequest(BaseModel):
     product_name: str
-    outdir: str | None = None  # 기본값은 None으로 설정하고, 엔드포인트에서 기본 경로 설정
+
+class ImageData(BaseModel):
+    url: str
+    base64: str
+    mime_type: str
+    index: int
 
 class CrawlResponse(BaseModel):
     product_name: str
     url: str
-    outdir: str
     image_count: int
-    saved_files: list[str]
+    images: list[ImageData]
     success: bool
     message: str
 

@@ -1,6 +1,3 @@
-import os
-from pathlib import Path
-
 from fastapi import FastAPI, HTTPException
 
 from . import schemas
@@ -112,36 +109,20 @@ async def crawl_product_images(request: schemas.CrawlRequest):
     product_info = product_name_to_model[product_name]
     product_url = product_info["url"]
     
-    # 저장 경로 설정 (기본값: ./downloads/{product_name})
-    if request.outdir:
-        outdir = request.outdir.strip()
-    else:
-        # 제품명을 파일 시스템 안전한 이름으로 변환
-        safe_name = "".join(c if c.isalnum() or c in (' ', '-', '_') else '_' for c in product_name)
-        safe_name = safe_name.replace(' ', '_')
-        outdir = f"./downloads/{safe_name}"
-    
     # 크롤링 실행
     try:
-        print(f"[INFO] 크롤링 시작 - 제품명: {product_name}, URL: {product_url}, 저장경로: {outdir}")
-        await crawl_single_page(product_url, outdir)
+        print(f"[INFO] 크롤링 시작 - 제품명: {product_name}, URL: {product_url}")
+        images_data = await crawl_single_page(product_url)
         
-        # 저장된 파일 목록 가져오기
-        outdir_path = Path(outdir).resolve()
-        saved_files = []
-        if outdir_path.exists():
-            saved_files = sorted([f.name for f in outdir_path.iterdir() if f.is_file()])
-        
-        print(f"[INFO] 크롤링 완료 - 이미지 {len(saved_files)}개 다운로드됨")
+        print(f"[INFO] 크롤링 완료 - 이미지 {len(images_data)}개 base64 인코딩 완료")
         
         return {
             "product_name": product_name,
             "url": product_url,
-            "outdir": str(outdir_path.absolute()),
-            "image_count": len(saved_files),
-            "saved_files": saved_files,
+            "image_count": len(images_data),
+            "images": images_data,
             "success": True,
-            "message": f"제품 '{product_name}'의 이미지 {len(saved_files)}개를 성공적으로 다운로드했습니다."
+            "message": f"제품 '{product_name}'의 이미지 {len(images_data)}개를 성공적으로 크롤링하고 base64로 인코딩했습니다."
         }
     except Exception as e:
         import traceback

@@ -20,6 +20,7 @@ single_page_image_crawler.py
 """
 
 import asyncio
+import base64
 import os
 import re
 import sys
@@ -74,13 +75,16 @@ async def collect_images(page, container_sel="[id^='partContents_']", img_sel="i
 
 
 # 내부 크롤링 함수 (별도 이벤트 루프에서 실행)
-async def _crawl_single_page_internal(url: str, outdir: str):
+async def _crawl_single_page_internal(url: str) -> list[dict[str, str]]:
     """
     실제 크롤링 로직을 수행하는 내부 함수
+    이미지를 base64로 인코딩하여 반환
     
     Args:
         url: 크롤링할 페이지 URL
-        outdir: 이미지를 저장할 디렉토리 경로 (절대 경로)
+    
+    Returns:
+        이미지 정보 리스트: [{"url": "이미지URL", "base64": "base64데이터", "mime_type": "image/jpeg", "index": 1}, ...]
     
     Raises:
         Exception: 크롤링 중 오류 발생 시
@@ -88,7 +92,8 @@ async def _crawl_single_page_internal(url: str, outdir: str):
     browser = None
     context = None
     page = None
-    imgs = []
+    img_urls = []
+    images_data = []
     
     try:
         # Playwright를 context manager로 사용하여 자동 정리 보장
@@ -119,27 +124,49 @@ async def _crawl_single_page_internal(url: str, outdir: str):
                 raise Exception(f"페이지 로딩 실패 (URL: {url}): {str(e)}")
 
             try:
-                imgs = await collect_images(page)
-                print(f"[found] {len(imgs)} images")
+                img_urls = await collect_images(page)
+                print(f"[found] {len(img_urls)} images")
             except Exception as e:
                 raise Exception(f"이미지 수집 실패: {str(e)}")
 
             # 이미지가 없는 경우에도 정상적으로 처리
-            if len(imgs) == 0:
+            if len(img_urls) == 0:
                 print(f"[warning] 이미지를 찾을 수 없습니다. 선택자 '[id^=\"partContents_\"]' 내에 이미지가 없을 수 있습니다.")
+                return []
 
-            for idx, img_url in enumerate(imgs, start=1):
+            # 이미지를 다운로드하고 base64로 인코딩
+            for idx, img_url in enumerate(img_urls, start=1):
                 try:
-                    ext = (os.path.splitext(img_url)[1] or ".jpg").lower()
-                    filename = f"result_{idx:03d}{ext}"
-                    filepath = Path(outdir) / filename
-
                     headers = {"User-Agent": DEFAULT_UA, "Referer": url}
                     r = requests.get(img_url, headers=headers, timeout=15)
                     r.raise_for_status()
-                    filepath.write_bytes(r.content)
-
-                    print(f"  [saved] {filename}")
+                    
+                    # MIME 타입 결정
+                    content_type = r.headers.get('Content-Type', 'image/jpeg')
+                    if 'image' not in content_type:
+                        # Content-Type이 없거나 이미지가 아닌 경우 확장자로 판단
+                        ext = os.path.splitext(img_url)[1].lower()
+                        mime_map = {
+                            '.jpg': 'image/jpeg',
+                            '.jpeg': 'image/jpeg',
+                            '.png': 'image/png',
+                            '.gif': 'image/gif',
+                            '.webp': 'image/webp',
+                            '.svg': 'image/svg+xml'
+                        }
+                        content_type = mime_map.get(ext, 'image/jpeg')
+                    
+                    # base64 인코딩
+                    image_base64 = base64.b64encode(r.content).decode('utf-8')
+                    
+                    images_data.append({
+                        "url": img_url,
+                        "base64": image_base64,
+                        "mime_type": content_type,
+                        "index": idx
+                    })
+                    
+                    print(f"  [encoded] 이미지 {idx} - {content_type}")
                 except Exception as e:
                     print(f"  [ERROR] {img_url} - {e}")
                     # 개별 이미지 다운로드 실패는 계속 진행
@@ -161,7 +188,8 @@ async def _crawl_single_page_internal(url: str, outdir: str):
                 except Exception:
                     pass
 
-        print(f"[done] saved {len(imgs)} images to {outdir}")
+        print(f"[done] {len(images_data)} images encoded to base64")
+        return images_data
         
     except Exception as e:
         # 추가 정리 작업
@@ -185,26 +213,21 @@ async def _crawl_single_page_internal(url: str, outdir: str):
 
 
 #실질적인 크롤링 함수 (Windows 이벤트 루프 문제 해결)
-async def crawl_single_page(url: str, outdir: str):
+async def crawl_single_page(url: str) -> list[dict[str, str]]:
     """
     단일 페이지에서 이미지를 크롤링하는 함수
     Windows에서 이벤트 루프 문제를 해결하기 위해 별도 스레드에서 실행
+    이미지를 base64로 인코딩하여 반환
     
     Args:
         url: 크롤링할 페이지 URL
-        outdir: 이미지를 저장할 디렉토리 경로
+    
+    Returns:
+        이미지 정보 리스트: [{"url": "이미지URL", "base64": "base64데이터", "mime_type": "image/jpeg", "index": 1}, ...]
     
     Raises:
         Exception: 크롤링 중 오류 발생 시
     """
-    try:
-        # 절대 경로로 변환하여 경로 문제 방지
-        outdir_path = Path(outdir).resolve()
-        outdir_path.mkdir(parents=True, exist_ok=True)
-        outdir = str(outdir_path)
-    except Exception as e:
-        raise Exception(f"디렉토리 생성 실패: {outdir} - {str(e)}")
-
     # Windows에서 이벤트 루프 문제 해결: 별도 스레드에서 새 이벤트 루프 생성
     if sys.platform == "win32":
         import concurrent.futures
@@ -219,7 +242,7 @@ async def crawl_single_page(url: str, outdir: str):
                 loop = asyncio.new_event_loop()
             
             try:
-                loop.run_until_complete(_crawl_single_page_internal(url, outdir))
+                return loop.run_until_complete(_crawl_single_page_internal(url))
             except Exception as e:
                 # 예외를 다시 발생시켜서 상위로 전파
                 raise
@@ -237,21 +260,27 @@ async def crawl_single_page(url: str, outdir: str):
         # 별도 스레드에서 실행
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(run_in_new_loop)
-            future.result()  # 결과 대기 (예외도 전파됨)
+            return future.result()  # 결과 반환 (예외도 전파됨)
     else:
         # Windows가 아닌 경우 현재 이벤트 루프에서 실행
-        await _crawl_single_page_internal(url, outdir)
+        return await _crawl_single_page_internal(url)
 
 
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) < 3:
+    if len(sys.argv) < 2:
         #프로그램은 인자로 url과 함께 호출되어야 함
-        print("잘못된 호출입니다.")
+        print("잘못된 호출입니다. 사용법: python new_single_page_crawler.py <URL>")
         sys.exit(1)
 
     url = sys.argv[1]
-    outdir = sys.argv[2]
-
-    asyncio.run(crawl_single_page(url, outdir))
+    
+    # 직접 실행 시 base64 인코딩된 이미지 출력
+    async def main():
+        images = await crawl_single_page(url)
+        print(f"\n총 {len(images)}개의 이미지를 base64로 인코딩했습니다.")
+        for img in images:
+            print(f"  이미지 {img['index']}: {img['mime_type']} ({len(img['base64'])} bytes base64)")
+    
+    asyncio.run(main())

@@ -21,6 +21,7 @@ single_page_image_crawler.py
 
 import asyncio
 import base64
+import io
 import os
 import re
 import sys
@@ -28,10 +29,22 @@ from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 import requests
+try:
+    from PIL import Image  # type: ignore
+except ImportError as exc:  # pragma: no cover
+    raise RuntimeError(
+        "이미지 최적화를 위해 Pillow가 필요합니다. 'pip install Pillow' 실행 후 다시 시도하세요."
+    ) from exc
 from playwright.async_api import async_playwright
 
 
 DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36"
+RESAMPLE_FILTER = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+
+# Claude 이미지 입력 제약 대응 (환경변수로 조정 가능)
+MAX_IMAGES_FOR_LLM = int(os.getenv("LLM_IMAGE_MAX_COUNT", "4"))
+MAX_LLM_IMAGE_BYTES = int(os.getenv("LLM_IMAGE_MAX_BYTES", str(950_000)))  # 약간의 버퍼
+MAX_LLM_IMAGE_DIMENSION = int(os.getenv("LLM_IMAGE_MAX_DIMENSION", "1024"))
 
 
 # 가상 브라우저의 해상도에 따른 view 차이를 고려해 가장 고화질 이미지를 불러오기 위한 함수
@@ -72,6 +85,52 @@ async def collect_images(page, container_sel="[id^='partContents_']", img_sel="i
             if src:
                 img_urls.append(urljoin(page.url, src))
     return img_urls
+
+
+def optimize_image_bytes(
+    raw_bytes: bytes,
+    mime_type: str,
+    max_bytes: int,
+    max_dimension: int,
+) -> tuple[bytes, str, int, int]:
+    """
+    Claude 한도(1MB) 내로 이미지를 맞추기 위해 리사이즈/재압축한다.
+
+    Returns:
+        optimized_bytes, optimized_mime_type, original_size, optimized_size
+    """
+    original_size = len(raw_bytes)
+    if original_size <= max_bytes:
+        return raw_bytes, mime_type, original_size, original_size
+
+    try:
+        with Image.open(io.BytesIO(raw_bytes)) as img:
+            if img.mode not in ("RGB", "L"):
+                img = img.convert("RGB")
+
+            longest_side = max(img.size)
+            if longest_side > max_dimension:
+                scale = max_dimension / float(longest_side)
+                new_size = (int(img.width * scale), int(img.height * scale))
+                img = img.resize(new_size, RESAMPLE_FILTER)
+
+            buffer = io.BytesIO()
+            quality = 85
+            optimized_size = original_size
+
+            while quality >= 50:
+                buffer.seek(0)
+                buffer.truncate(0)
+                img.save(buffer, format="JPEG", optimize=True, quality=quality)
+                optimized_size = buffer.tell()
+                if optimized_size <= max_bytes or quality == 50:
+                    break
+                quality -= 5
+
+            return buffer.getvalue(), "image/jpeg", original_size, optimized_size
+    except Exception:
+        # Pillow 처리 실패 시 원본 전달 (최소한 Claude 호출 전에 필터링 가능)
+        return raw_bytes, mime_type, original_size, original_size
 
 
 # 내부 크롤링 함수 (별도 이벤트 루프에서 실행)
@@ -125,7 +184,10 @@ async def _crawl_single_page_internal(url: str) -> list[dict[str, str]]:
 
             try:
                 img_urls = await collect_images(page)
-                print(f"[found] {len(img_urls)} images")
+                print(f"[found] {len(img_urls)} images (before limiting)")
+                if len(img_urls) > MAX_IMAGES_FOR_LLM:
+                    img_urls = img_urls[:MAX_IMAGES_FOR_LLM]
+                    print(f"[trimmed] Claude 한도에 맞춰 {len(img_urls)}장만 사용")
             except Exception as e:
                 raise Exception(f"이미지 수집 실패: {str(e)}")
 
@@ -156,17 +218,29 @@ async def _crawl_single_page_internal(url: str) -> list[dict[str, str]]:
                         }
                         content_type = mime_map.get(ext, 'image/jpeg')
                     
+                    optimized_bytes, optimized_mime, original_size, optimized_size = optimize_image_bytes(
+                        r.content,
+                        content_type,
+                        MAX_LLM_IMAGE_BYTES,
+                        MAX_LLM_IMAGE_DIMENSION,
+                    )
+
                     # base64 인코딩
-                    image_base64 = base64.b64encode(r.content).decode('utf-8')
+                    image_base64 = base64.b64encode(optimized_bytes).decode('utf-8')
                     
                     images_data.append({
                         "url": img_url,
                         "base64": image_base64,
-                        "mime_type": content_type,
-                        "index": idx
+                        "mime_type": optimized_mime,
+                        "index": idx,
+                        "original_size_bytes": original_size,
+                        "optimized_size_bytes": optimized_size,
                     })
                     
-                    print(f"  [encoded] 이미지 {idx} - {content_type}")
+                    print(
+                        f"  [encoded] #{idx} {optimized_mime} "
+                        f"(원본 {original_size/1024:.1f}KB -> {optimized_size/1024:.1f}KB)"
+                    )
                 except Exception as e:
                     print(f"  [ERROR] {img_url} - {e}")
                     # 개별 이미지 다운로드 실패는 계속 진행

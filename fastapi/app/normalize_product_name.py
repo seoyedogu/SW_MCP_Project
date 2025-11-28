@@ -1,3 +1,9 @@
+import logging
+import re
+from urllib.parse import urljoin
+
+import requests
+from bs4 import BeautifulSoup
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
 
 # 제품명 -> 모델명 및 URL 매핑 저장용 변수 (메모리에 저장)
@@ -55,6 +61,86 @@ def normalize_search_keyword(product_name: str) -> list[str]:
     return result
 
 
+def _extract_model_from_detail_html(html: str) -> str | None:
+    """스펙 테이블/요약 문구에서 모델명을 추출."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    # 테이블 기반 추출
+    for selector in [
+        "table.spec_tbl tr",
+        ".spec_tbl tr",
+        ".prod_spec tr",
+    ]:
+        for row in soup.select(selector):
+            header = row.find("th")
+            value = row.find("td")
+            if not header or not value:
+                continue
+            label = header.get_text(strip=True).lower()
+            if any(keyword in label for keyword in ["모델명", "제품모델명", "model", "model name"]):
+                text = value.get_text(strip=True)
+                if text:
+                    return text
+
+    # 제목/요약에서 패턴 검색
+    candidates = []
+    for selector in [
+        "h3.prod_tit",
+        "h1.prod_tit",
+        ".prod_tit",
+        ".prod_summary_info",
+        ".product_info",
+    ]:
+        element = soup.select_one(selector)
+        if element:
+            candidates.append(element.get_text(" ", strip=True))
+
+    pattern = r"\b[A-Z]{2,}[0-9A-Z]{4,}\b"
+    for text in candidates:
+        match = re.search(pattern, text or "")
+        if match:
+            return match.group(0)
+
+    return None
+
+
+def _search_with_requests(search_url: str, user_agent: str) -> dict[str, str] | None:
+    """Playwright 실패 시 requests/BeautifulSoup 기반 크롤링."""
+    headers = {"User-Agent": user_agent, "Referer": "https://search.danawa.com/"}
+    resp = requests.get(search_url, headers=headers, timeout=10)
+    resp.raise_for_status()
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    product = soup.select_one(".product_list .prod_item")
+    if not product:
+        logging.warning("[normalize-fallback] product list empty")
+        return None
+
+    link = product.select_one(".prod_name a, a[class^='click_log_product_standard_title_']")
+    if not link or not link.get("href"):
+        logging.warning("[normalize-fallback] product link missing")
+        return None
+
+    product_url = link.get("href")
+    if product_url.startswith("/info"):
+        product_url = urljoin("http://prod.danawa.com", product_url)
+
+    detail_resp = requests.get(product_url, headers=headers, timeout=10)
+    detail_resp.raise_for_status()
+    model_name = _extract_model_from_detail_html(detail_resp.text)
+
+    if model_name:
+        logging.info(
+            "[normalize-fallback] extracted model=%s url=%s",
+            model_name,
+            product_url,
+        )
+        return {"model": model_name, "url": product_url}
+
+    logging.warning("[normalize-fallback] unable to find model text")
+    return None
+
+
 def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | None:
     """
     다나와에서 검색하여 모델명과 URL을 추출하는 함수
@@ -65,7 +151,6 @@ def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | Non
     Returns:
         {"model": "모델명", "url": "URL"} 또는 None
     """
-    import re
     import urllib.parse
 
     encoded_keyword = urllib.parse.quote(search_keyword)
@@ -77,6 +162,7 @@ def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | Non
         "Chrome/120.0.0.0 Safari/537.36"
     )
 
+    playwright_result: dict[str, str] | None = None
     try:
         with sync_playwright() as playwright:
             browser = None
@@ -86,94 +172,102 @@ def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | Non
                 context = browser.new_context(user_agent=user_agent)
                 page = context.new_page()
 
+                logging.info("[normalize] search_url=%s keyword=%s", search_url, search_keyword)
+
                 page.goto(search_url, timeout=15000, wait_until="domcontentloaded")
                 page.wait_for_selector(".product_list .prod_item", timeout=5000)
 
                 product_locator = page.locator(".product_list .prod_item").first
                 if product_locator.count() == 0:
-                    return None
+                    logging.warning("[normalize] no product items found")
+                else:
+                    product_link_locator = product_locator.locator(
+                        ".prod_name a, a[class^='click_log_product_standard_title_']"
+                    ).first
+                    if product_link_locator.count() == 0:
+                        logging.warning("[normalize] product link not found")
+                    else:
+                        product_url = product_link_locator.get_attribute("href")
+                        if not product_url:
+                            logging.warning("[normalize] product link has no href")
+                        else:
+                            if product_url.startswith("/info"):
+                                product_url = "http://prod.danawa.com" + product_url
 
-                product_link_locator = product_locator.locator(
-                    ".prod_name a, a[class^='click_log_product_standard_title_']"
-                ).first
-                if product_link_locator.count() == 0:
-                    return None
+                            page.goto(product_url, timeout=15000, wait_until="domcontentloaded")
 
-                product_url = product_link_locator.get_attribute("href")
-                if not product_url:
-                    return None
-                if product_url.startswith("/info"):
-                    product_url = "http://prod.danawa.com" + product_url
-                
-                # 전체 URL 저장
-                full_product_url = product_url
+                            model_name = None
+                            spec_rows = page.locator("table.spec_tbl tr, .spec_tbl tr, .prod_spec tr")
+                            for index in range(spec_rows.count()):
+                                row = spec_rows.nth(index)
+                                th = row.locator("th").first
+                                td = row.locator("td").first
 
-                page.goto(product_url, timeout=15000, wait_until="domcontentloaded")
+                                if th.count() == 0 or td.count() == 0:
+                                    continue
 
-                model_name = None
-                spec_rows = page.locator("table.spec_tbl tr, .spec_tbl tr, .prod_spec tr")
-                for index in range(spec_rows.count()):
-                    row = spec_rows.nth(index)
-                    th = row.locator("th").first
-                    td = row.locator("td").first
+                                try:
+                                    label = th.inner_text(timeout=2000).strip().lower()
+                                    value = td.inner_text(timeout=2000).strip()
+                                except PlaywrightTimeoutError:
+                                    continue
 
-                    if th.count() == 0 or td.count() == 0:
-                        continue
+                                if any(keyword in label for keyword in ["모델명", "제품모델명", "model", "model name"]):
+                                    model_name = value
+                                    break
 
-                    try:
-                        label = th.inner_text(timeout=2000).strip().lower()
-                        value = td.inner_text(timeout=2000).strip()
-                    except PlaywrightTimeoutError:
-                        continue
+                            if not model_name:
+                                product_title_locator = page.locator("h3.prod_tit, h1.prod_tit, .prod_tit").first
+                                if product_title_locator.count() > 0:
+                                    try:
+                                        title_text = product_title_locator.inner_text(timeout=2000)
+                                    except PlaywrightTimeoutError:
+                                        title_text = ""
+                                    matches = re.findall(r"\b[A-Z]{2,}[0-9A-Z]{4,}\b", title_text)
+                                    if matches:
+                                        model_name = matches[0]
 
-                    if any(keyword in label for keyword in ["모델명", "제품모델명", "model", "model name"]):
-                        model_name = value
-                        break
+                            if not model_name:
+                                detail_info_locator = page.locator(".prod_summary_info, .product_info").first
+                                if detail_info_locator.count() > 0:
+                                    try:
+                                        info_text = detail_info_locator.inner_text(timeout=2000)
+                                    except PlaywrightTimeoutError:
+                                        info_text = ""
+                                    matches = re.findall(r"\b[A-Z]{2,}[0-9A-Z]{4,}\b", info_text)
+                                    if matches:
+                                        model_name = matches[0]
 
-                if not model_name:
-                    product_title_locator = page.locator("h3.prod_tit, h1.prod_tit, .prod_tit").first
-                    if product_title_locator.count() > 0:
-                        try:
-                            title_text = product_title_locator.inner_text(timeout=2000)
-                        except PlaywrightTimeoutError:
-                            title_text = ""
-                        pattern = r"\b[A-Z]{2,}[0-9A-Z]{4,}\b"
-                        matches = re.findall(pattern, title_text)
-                        if matches:
-                            model_name = matches[0]
-
-                if not model_name:
-                    detail_info_locator = page.locator(".prod_summary_info, .product_info").first
-                    if detail_info_locator.count() > 0:
-                        try:
-                            info_text = detail_info_locator.inner_text(timeout=2000)
-                        except PlaywrightTimeoutError:
-                            info_text = ""
-                        pattern = r"\b[A-Z]{2,}[0-9A-Z]{4,}\b"
-                        matches = re.findall(pattern, info_text)
-                        if matches:
-                            model_name = matches[0]
-
-                if model_name:
-                    return {"model": model_name, "url": full_product_url}
-                return None
+                            if model_name:
+                                logging.info("[normalize] extracted model=%s url=%s", model_name, product_url)
+                                playwright_result = {"model": model_name, "url": product_url}
+                            else:
+                                logging.warning("[normalize] model name not found in detail page")
             finally:
                 if context is not None:
                     try:
                         context.close()
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logging.warning("[normalize] context close failed: %s", exc)
                 if browser is not None:
                     try:
                         browser.close()
-                    except Exception:
-                        pass
-    except PlaywrightTimeoutError:
-        return None
-    except Exception:
-        return None
+                    except Exception as exc:
+                        logging.warning("[normalize] browser close failed: %s", exc)
+    except PlaywrightTimeoutError as exc:
+        logging.error("[normalize] Playwright timeout: %s", exc)
+    except Exception as exc:
+        logging.error("[normalize] unexpected error: %s", exc, exc_info=True)
 
-    return None
+    if playwright_result:
+        return playwright_result
+
+    logging.info("[normalize] falling back to requests parser")
+    try:
+        return _search_with_requests(search_url, user_agent)
+    except Exception as exc:  # noqa: BLE001
+        logging.error("[normalize-fallback] request parsing failed: %s", exc, exc_info=True)
+        return None
 
 
 def convert_product_name_to_model(product_name: str) -> dict[str, str] | None:

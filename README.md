@@ -153,6 +153,15 @@ uvicorn app.main:app --reload
 
 서버는 기본적으로 `http://localhost:8000`에서 실행됩니다.
 
+### 1-1. MCP 서버(Claude 연동) 실행
+1. 루트 디렉터리에서 MCP 의존성을 설치합니다.
+   ```bash
+   pip install mcp anyio
+   ```
+2. `python mcp_server.py` 명령으로 STDIO 기반 MCP 서버를 실행합니다.
+3. `mcp_config.json` 내용을 Claude Desktop 혹은 Cursor의 MCP 설정에 복사하면, `product-analyzer` 서버가 `normalize_product_name` / `crawl_product_images` 두 가지 Tool을 제공하게 됩니다.
+4. Claude에서의 실행 순서는 README 상단의 흐름(사용자 입력 → 모델명 정규화 → 이미지 크롤링 → Base64 전달 → LLM 분석)을 그대로 따르면 됩니다.
+
 ### 2. API 문서 확인
 브라우저에서 `http://localhost:8000/docs` 접속하여 Swagger UI에서 API를 테스트할 수 있습니다.
 
@@ -173,12 +182,14 @@ python test_crawl.py
 - Playwright를 사용한 동적 페이지 크롤링
 - `[id^="partContents_"]` 선택자 내의 이미지 수집
 - 이미지를 Base64로 인코딩하여 반환
+- Claude 한도(이미지 1MB) 대응을 위해 최대 4장만 추출하고 Pillow로 자동 리사이즈/재압축
 - Windows 이벤트 루프 문제 해결 (별도 스레드에서 실행)
 
 ## 주의사항
 
 - Windows 환경에서는 Playwright 실행 시 이벤트 루프 문제가 발생할 수 있어 별도 스레드에서 실행하도록 구현되어 있습니다.
 - 크롤링된 이미지는 메모리에서 Base64로 인코딩되어 반환되며, 파일로 저장되지 않습니다.
+- Claude와 연동 시 `LLM_IMAGE_MAX_COUNT`, `LLM_IMAGE_MAX_BYTES`, `LLM_IMAGE_MAX_DIMENSION` 환경변수로 이미지 개수‧용량을 상황에 맞게 조절할 수 있습니다.
 - 제품명은 먼저 `/normalize-product-name` 엔드포인트로 등록한 후 `/crawl` 엔드포인트를 사용해야 합니다.
 
 ## 커밋 규칙

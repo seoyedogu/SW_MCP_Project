@@ -22,6 +22,8 @@ class ImageData(BaseModel):
     base64: str
     mime_type: str
     index: int
+    original_size_bytes: int | None = None
+    optimized_size_bytes: int | None = None
 
 class CrawlResponse(BaseModel):
     product_name: str

@@ -27,6 +27,7 @@
 ## 기술 스택
 
 - **Backend**: FastAPI
+- **MCP Server**: fastmcp (Anthropic Claude MCP 프로토콜)
 - **Web Scraping**: Playwright (비동기)
 - **Data Processing**: Python 3.x
 - **API**: RESTful API
@@ -56,7 +57,13 @@ cd fastapi
 pip install -r requirements.txt
 ```
 
-### 4. Playwright 브라우저 설치
+### 4. MCP 서버 의존성 설치 (MCP 서버 사용 시)
+```bash
+# 루트 디렉터리에서
+pip install mcp anyio
+```
+
+### 5. Playwright 브라우저 설치
 ```bash
 playwright install chromium
 ```
@@ -72,9 +79,9 @@ SW_MCP_Project/
 │   │   ├── normalize_product_name.py  # 제품명 정규화 로직
 │   │   ├── new_single_page_crawler.py # 이미지 크롤링 로직
 │   │   └── schemas.py              # Pydantic 스키마 정의
-│   ├── requirements.txt
-│   └── downloads/                  # 크롤링된 이미지 저장 (gitignore)
-├── test_crawl.py                   # 테스트 스크립트
+│   └── requirements.txt
+├── mcp_server.py                   # MCP 서버 엔트리포인트
+├── mcp_config.json                  # MCP 서버 설정 파일
 ├── README.md
 └── .gitignore
 ```
@@ -127,13 +134,17 @@ SW_MCP_Project/
       "url": "https://...",
       "base64": "iVBORw0KGgoAAAANSUhEUgAA...",
       "mime_type": "image/jpeg",
-      "index": 1
+      "index": 1,
+      "original_size_bytes": 245760,
+      "optimized_size_bytes": 89234
     },
     {
       "url": "https://...",
       "base64": "iVBORw0KGgoAAAANSUhEUgAA...",
       "mime_type": "image/png",
-      "index": 2
+      "index": 2,
+      "original_size_bytes": 189234,
+      "optimized_size_bytes": 87654
     }
   ],
   "success": true,
@@ -158,24 +169,24 @@ uvicorn app.main:app --reload
    ```bash
    pip install mcp anyio
    ```
-2. `python mcp_server.py` 명령으로 STDIO 기반 MCP 서버를 실행합니다.
-3. `mcp_config.json` 내용을 Claude Desktop 혹은 Cursor의 MCP 설정에 복사하면, `product-analyzer` 서버가 `normalize_product_name` / `crawl_product_images` 두 가지 Tool을 제공하게 됩니다.
+2. `mcp_config.json` 파일의 내용을 Claude Desktop 또는 Cursor의 MCP 설정 파일에 추가합니다.
+   - Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` (Windows) 또는 `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac)
+   - Cursor: 설정에서 MCP 서버 추가
+3. MCP 서버는 STDIO 기반으로 자동 실행되며, `product-analyzer` 서버가 다음 두 가지 Tool을 제공합니다:
+   - `normalize_product_name`: 자연어 제품명을 제조사 모델명과 상품 URL로 정규화
+   - `crawl_product_images`: 저장된 제품 URL에서 이미지를 최대 4장까지 크롤링하여 Base64로 인코딩
 4. Claude에서의 실행 순서는 README 상단의 흐름(사용자 입력 → 모델명 정규화 → 이미지 크롤링 → Base64 전달 → LLM 분석)을 그대로 따르면 됩니다.
 
 ### 2. API 문서 확인
 브라우저에서 `http://localhost:8000/docs` 접속하여 Swagger UI에서 API를 테스트할 수 있습니다.
-
-### 3. 테스트 스크립트 실행
-```bash
-python test_crawl.py
-```
 
 ## 주요 기능 설명
 
 ### 제품명 정규화 (`normalize_product_name.py`)
 - 다나와에서 제품명으로 검색
 - 첫 번째 결과의 모델명 추출
-- 제품명 변형 자동 처리 (예: "삼성 블루스카이" → "삼성 전자 블루스카이")
+- 제품명 변형 자동 처리 (예: "삼성 블루스카이" → "삼성 전자 블루스카이", "LG" → "LG전자")
+- Playwright 실패 시 requests/BeautifulSoup 기반 폴백 처리
 - 모델명과 URL을 메모리에 저장
 
 ### 이미지 크롤링 (`new_single_page_crawler.py`)
@@ -183,6 +194,7 @@ python test_crawl.py
 - `[id^="partContents_"]` 선택자 내의 이미지 수집
 - 이미지를 Base64로 인코딩하여 반환
 - Claude 한도(이미지 1MB) 대응을 위해 최대 4장만 추출하고 Pillow로 자동 리사이즈/재압축
+- 원본 및 최적화된 이미지 크기 정보 제공 (`original_size_bytes`, `optimized_size_bytes`)
 - Windows 이벤트 루프 문제 해결 (별도 스레드에서 실행)
 
 ## 주의사항

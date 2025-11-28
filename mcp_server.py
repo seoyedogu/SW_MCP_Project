@@ -117,7 +117,7 @@ TOOL_DEFINITIONS = {
     ),
     "compare_products": types.Tool(
         name="compare_products",
-        description="두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환합니다. 각 제품의 정보와 이미지를 구조화하여 제공하므로 LLM이 공통점과 차이점을 분석할 수 있습니다.",
+        description="두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환합니다. 각 제품의 정보와 이미지를 구조화하여 제공하므로 LLM이 차이점을 위주로 비교 분석할 수 있습니다. 비교 시 디자인, 특징, 가격대 등의 차이점에 집중하여 설명해주세요.",
         inputSchema={
             "type": "object",
             "properties": {
@@ -163,6 +163,17 @@ TOOL_DEFINITIONS = {
                 "total_products": {"type": "integer"},
                 "success": {"type": "boolean"},
                 "message": {"type": "string"},
+                "comparison_hint": {
+                    "type": "object",
+                    "properties": {
+                        "focus": {"type": "string"},
+                        "comparison_points": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "note": {"type": "string"},
+                    },
+                },
             },
             "required": ["products", "total_products", "success", "message"],
         },
@@ -293,11 +304,32 @@ async def _compare_products(product_names: list[str]) -> dict[str, object]:
         if len(errors) > 3:
             message += f"\n... 외 {len(errors) - 3}개"
     
+    # 비교를 위한 가이드 추가
+    comparison_guide = (
+        "\n\n[비교 가이드]\n"
+        "수집된 제품 정보를 바탕으로 다음 항목을 중심으로 차이점을 비교해주세요:\n"
+        "1. 제품 디자인: 색상, 형태, 크기 등의 차이\n"
+        "2. 제품 특징: 기능, 성능, 사양 등의 차이\n"
+        "3. 가격대: 다나와 링크를 통해 최신 가격 확인 가능\n"
+        "4. 주요 차이점: 각 제품의 고유한 특징과 장단점\n"
+        "\n공통점보다는 차이점에 집중하여 비교 설명해주세요."
+    )
+    
     return {
         "products": products_info,
         "total_products": len(products_info),
         "success": len(products_info) > 0,
-        "message": message,
+        "message": message + comparison_guide,
+        "comparison_hint": {
+            "focus": "차이점",
+            "comparison_points": [
+                "제품 디자인 (색상, 형태, 크기)",
+                "제품 특징 (기능, 성능, 사양)",
+                "가격대",
+                "주요 차이점 및 고유 특징"
+            ],
+            "note": "공통점보다는 차이점에 집중하여 비교해주세요."
+        },
     }
 
 

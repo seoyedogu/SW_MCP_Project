@@ -241,11 +241,32 @@ async def compare_products(request: schemas.CompareProductsRequest):
             error_summary += f"\n... 외 {len(errors) - 3}개 제품 처리 실패"
         message += f"\n\n주의: {len(errors)}개 제품 처리 실패:\n{error_summary}"
     
+    # 비교를 위한 가이드 추가
+    comparison_guide = (
+        "\n\n[비교 가이드]\n"
+        "수집된 제품 정보를 바탕으로 다음 항목을 중심으로 차이점을 비교해주세요:\n"
+        "1. 제품 디자인: 색상, 형태, 크기 등의 차이\n"
+        "2. 제품 특징: 기능, 성능, 사양 등의 차이\n"
+        "3. 가격대: 다나와 링크를 통해 최신 가격 확인 가능\n"
+        "4. 주요 차이점: 각 제품의 고유한 특징과 장단점\n"
+        "\n공통점보다는 차이점에 집중하여 비교 설명해주세요."
+    )
+    
     return {
         "products": products_info,
         "total_products": len(products_info),
         "success": True,
-        "message": message,
+        "message": message + comparison_guide,
+        "comparison_hint": {
+            "focus": "차이점",
+            "comparison_points": [
+                "제품 디자인 (색상, 형태, 크기)",
+                "제품 특징 (기능, 성능, 사양)",
+                "가격대",
+                "주요 차이점 및 고유 특징"
+            ],
+            "note": "공통점보다는 차이점에 집중하여 비교해주세요."
+        },
     }
 
 

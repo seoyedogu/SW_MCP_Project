@@ -152,6 +152,52 @@ SW_MCP_Project/
 }
 ```
 
+### 3. 제품 비교
+**POST** `/compare-products`
+
+두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환합니다.
+
+**Request:**
+```json
+{
+  "product_names": ["삼성 블루스카이 5500", "블루스카이 7000"]
+}
+```
+
+**Response:**
+```json
+{
+  "products": [
+    {
+      "product_name": "삼성 블루스카이 5500",
+      "model_name": "AX060CG500G",
+      "url": "http://prod.danawa.com/info/...",
+      "image_count": 2,
+      "images": [
+        {
+          "url": "https://...",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAA...",
+          "mime_type": "image/jpeg",
+          "index": 1,
+          "original_size_bytes": 245760,
+          "optimized_size_bytes": 89234
+        }
+      ]
+    },
+    {
+      "product_name": "블루스카이 7000",
+      "model_name": "AX060CG700G",
+      "url": "http://prod.danawa.com/info/...",
+      "image_count": 3,
+      "images": [...]
+    }
+  ],
+  "total_products": 2,
+  "success": true,
+  "message": "2개 제품의 정보를 수집했습니다."
+}
+```
+
 ## 사용 방법
 
 ### 1. 서버 실행
@@ -172,9 +218,10 @@ uvicorn app.main:app --reload
 2. `mcp_config.json` 파일의 내용을 Claude Desktop 또는 Cursor의 MCP 설정 파일에 추가합니다.
    - Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` (Windows) 또는 `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac)
    - Cursor: 설정에서 MCP 서버 추가
-3. MCP 서버는 STDIO 기반으로 자동 실행되며, `product-analyzer` 서버가 다음 두 가지 Tool을 제공합니다:
+3. MCP 서버는 STDIO 기반으로 자동 실행되며, `product-analyzer` 서버가 다음 세 가지 Tool을 제공합니다:
    - `normalize_product_name`: 자연어 제품명을 제조사 모델명과 상품 URL로 정규화
    - `crawl_product_images`: 저장된 제품 URL에서 이미지를 최대 4장까지 크롤링하여 Base64로 인코딩
+   - `compare_products`: 두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환 (공통점/차이점 분석을 위해 구조화된 데이터 제공)
 4. Claude에서의 실행 순서는 README 상단의 흐름(사용자 입력 → 모델명 정규화 → 이미지 크롤링 → Base64 전달 → LLM 분석)을 그대로 따르면 됩니다.
 
 ### 2. API 문서 확인
@@ -196,6 +243,12 @@ uvicorn app.main:app --reload
 - Claude 한도(이미지 1MB) 대응을 위해 최대 4장만 추출하고 Pillow로 자동 리사이즈/재압축
 - 원본 및 최적화된 이미지 크기 정보 제공 (`original_size_bytes`, `optimized_size_bytes`)
 - Windows 이벤트 루프 문제 해결 (별도 스레드에서 실행)
+
+### 제품 비교 (`/compare-products` 엔드포인트 및 `compare_products` MCP Tool)
+- 두 개 이상의 제품명을 입력받아 각 제품을 자동으로 정규화
+- 각 제품의 이미지를 수집하여 구조화된 형태로 반환
+- LLM이 공통점과 차이점을 분석할 수 있도록 데이터 제공
+- 일부 제품 처리 실패 시에도 다른 제품 처리는 계속 진행
 
 ## 주의사항
 

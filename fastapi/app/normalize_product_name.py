@@ -32,12 +32,21 @@ def normalize_search_keyword(product_name: str) -> list[str]:
         match = re.match(r'^삼성\s*(.+)', product_name)
         if match:
             rest = match.group(1)
-            normalized_name = f"삼성 전자 {rest}".strip()
-            if normalized_name != product_name:
-                keywords.append(normalized_name)
+            # 여러 변형 추가
+            normalized_name1 = f"삼성 전자 {rest}".strip()
+            normalized_name2 = f"삼성전자 {rest}".strip()
+            if normalized_name1 != product_name:
+                keywords.append(normalized_name1)
+            if normalized_name2 != product_name and normalized_name2 != normalized_name1:
+                keywords.append(normalized_name2)
     # "삼성전자"가 붙어있는 경우 "삼성 전자"로 변경
     elif "삼성전자" in product_name and "삼성 전자" not in product_name:
         normalized_name = product_name.replace("삼성전자", "삼성 전자")
+        if normalized_name != product_name:
+            keywords.append(normalized_name)
+    # "삼성 전자"가 있는 경우 "삼성전자"로도 시도
+    elif "삼성 전자" in product_name:
+        normalized_name = product_name.replace("삼성 전자", "삼성전자")
         if normalized_name != product_name:
             keywords.append(normalized_name)
     
@@ -174,27 +183,57 @@ def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | Non
 
                 logging.info("[normalize] search_url=%s keyword=%s", search_url, search_keyword)
 
-                page.goto(search_url, timeout=15000, wait_until="domcontentloaded")
-                page.wait_for_selector(".product_list .prod_item", timeout=5000)
+                page.goto(search_url, timeout=20000, wait_until="domcontentloaded")
+                # 페이지 로딩 대기 시간 추가
+                page.wait_for_timeout(2000)
+                
+                # 검색 결과 확인
+                products_found = False
+                try:
+                    page.wait_for_selector(".product_list .prod_item", timeout=10000)
+                    products_found = True
+                except PlaywrightTimeoutError:
+                    # 검색 결과가 없거나 로딩이 느린 경우
+                    logging.warning("[normalize] product list selector timeout, trying alternative selectors")
+                    # 대체 선택자 시도
+                    try:
+                        page.wait_for_selector(".prod_item, .product_item", timeout=5000)
+                        products_found = True
+                    except PlaywrightTimeoutError:
+                        logging.warning("[normalize] no products found with any selector")
+                        products_found = False
 
-                product_locator = page.locator(".product_list .prod_item").first
-                if product_locator.count() == 0:
-                    logging.warning("[normalize] no product items found")
+                if not products_found:
+                    logging.warning("[normalize] skipping product extraction - no products found")
                 else:
-                    product_link_locator = product_locator.locator(
-                        ".prod_name a, a[class^='click_log_product_standard_title_']"
-                    ).first
-                    if product_link_locator.count() == 0:
-                        logging.warning("[normalize] product link not found")
+                    # 여러 선택자 시도
+                    product_locator = None
+                    for selector in [".product_list .prod_item", ".prod_item", ".product_item"]:
+                        locator = page.locator(selector).first
+                        if locator.count() > 0:
+                            product_locator = locator
+                            logging.info(f"[normalize] found products with selector: {selector}")
+                            break
+                    
+                    if not product_locator or product_locator.count() == 0:
+                        logging.warning("[normalize] no product items found with any selector")
                     else:
-                        product_url = product_link_locator.get_attribute("href")
-                        if not product_url:
-                            logging.warning("[normalize] product link has no href")
+                        product_link_locator = product_locator.locator(
+                            ".prod_name a, a[class^='click_log_product_standard_title_']"
+                        ).first
+                        if product_link_locator.count() == 0:
+                            logging.warning("[normalize] product link not found")
                         else:
-                            if product_url.startswith("/info"):
-                                product_url = "http://prod.danawa.com" + product_url
+                            product_url = product_link_locator.get_attribute("href")
+                            if not product_url:
+                                logging.warning("[normalize] product link has no href")
+                            else:
+                                if product_url.startswith("/info"):
+                                    product_url = "http://prod.danawa.com" + product_url
 
-                            page.goto(product_url, timeout=15000, wait_until="domcontentloaded")
+                            page.goto(product_url, timeout=20000, wait_until="domcontentloaded")
+                            # 상세 페이지 로딩 대기
+                            page.wait_for_timeout(2000)
 
                             model_name = None
                             spec_rows = page.locator("table.spec_tbl tr, .spec_tbl tr, .prod_spec tr")
@@ -217,30 +256,87 @@ def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | Non
                                     break
 
                             if not model_name:
+                                # 제목에서 모델명 추출 시도
                                 product_title_locator = page.locator("h3.prod_tit, h1.prod_tit, .prod_tit").first
                                 if product_title_locator.count() > 0:
                                     try:
                                         title_text = product_title_locator.inner_text(timeout=2000)
+                                        logging.info(f"[normalize] title text: {title_text[:100]}")
                                     except PlaywrightTimeoutError:
                                         title_text = ""
-                                    matches = re.findall(r"\b[A-Z]{2,}[0-9A-Z]{4,}\b", title_text)
-                                    if matches:
-                                        model_name = matches[0]
+                                    # 더 다양한 모델명 패턴 시도
+                                    patterns = [
+                                        r"\b[A-Z]{2,}[0-9A-Z]{4,}\b",  # 기본 패턴
+                                        r"\b[A-Z]{2,}[0-9]{2,}[A-Z]{0,}[0-9A-Z]{2,}\b",  # AP70F03102RTD 같은 패턴
+                                        r"\b[A-Z]{2,}[0-9]{1,}[A-Z]{1,}[0-9]{1,}[A-Z]{0,}[0-9A-Z]{1,}\b",  # 더 유연한 패턴
+                                    ]
+                                    for pattern in patterns:
+                                        matches = re.findall(pattern, title_text)
+                                        if matches:
+                                            model_name = matches[0]
+                                            logging.info(f"[normalize] found model in title with pattern {pattern}: {model_name}")
+                                            break
 
                             if not model_name:
-                                detail_info_locator = page.locator(".prod_summary_info, .product_info").first
+                                # 상세 정보에서 모델명 추출 시도
+                                detail_info_locator = page.locator(".prod_summary_info, .product_info, .spec_summary").first
                                 if detail_info_locator.count() > 0:
                                     try:
                                         info_text = detail_info_locator.inner_text(timeout=2000)
+                                        logging.info(f"[normalize] info text: {info_text[:100]}")
                                     except PlaywrightTimeoutError:
                                         info_text = ""
-                                    matches = re.findall(r"\b[A-Z]{2,}[0-9A-Z]{4,}\b", info_text)
-                                    if matches:
-                                        model_name = matches[0]
+                                    patterns = [
+                                        r"\b[A-Z]{2,}[0-9A-Z]{4,}\b",
+                                        r"\b[A-Z]{2,}[0-9]{2,}[A-Z]{0,}[0-9A-Z]{2,}\b",
+                                        r"\b[A-Z]{2,}[0-9]{1,}[A-Z]{1,}[0-9]{1,}[A-Z]{0,}[0-9A-Z]{1,}\b",
+                                    ]
+                                    for pattern in patterns:
+                                        matches = re.findall(pattern, info_text)
+                                        if matches:
+                                            model_name = matches[0]
+                                            logging.info(f"[normalize] found model in info with pattern {pattern}: {model_name}")
+                                            break
+                                    
+                            # URL에서 pcode 추출 (모델명이 없어도 URL은 유효)
+                            current_url = page.url
+                            pcode_match = re.search(r'pcode=(\d+)', current_url)
+                            if pcode_match:
+                                logging.info(f"[normalize] found pcode in URL: {pcode_match.group(1)}")
+                            
+                            # 모델명이 없어도 URL이 있으면 반환 (나중에 모델명 추출 가능)
+                            # 하지만 우선 모델명을 찾기 위해 페이지 전체 텍스트에서도 시도
+                            if not model_name:
+                                try:
+                                    # 페이지 전체에서 모델명 패턴 검색
+                                    page_text = page.locator("body").inner_text(timeout=3000)
+                                    patterns = [
+                                        r"\bAP\d{2}[A-Z]\d{5}[A-Z]{2,}\b",  # AP70F03102RTD 같은 패턴
+                                        r"\b[A-Z]{2,}\d{2,}[A-Z]{1,}\d{2,}[A-Z]{2,}\b",  # 일반적인 긴 모델명
+                                        r"\b[A-Z]{2,}[0-9A-Z]{6,}\b",  # 6자 이상 모델명
+                                    ]
+                                    for pattern in patterns:
+                                        matches = re.findall(pattern, page_text)
+                                        if matches:
+                                            # 가장 긴 모델명을 선택 (일반적으로 더 정확함)
+                                            model_name = max(matches, key=len)
+                                            logging.info(f"[normalize] found model in page text with pattern {pattern}: {model_name}")
+                                            break
+                                except Exception as e:
+                                    logging.warning(f"[normalize] failed to extract model from page text: {e}")
 
                             if model_name:
                                 logging.info("[normalize] extracted model=%s url=%s", model_name, product_url)
                                 playwright_result = {"model": model_name, "url": product_url}
+                            elif product_url:
+                                # 모델명을 찾지 못했지만 URL은 있으면, URL 기반으로 임시 모델명 생성
+                                # pcode를 모델명으로 사용하거나, URL의 일부를 사용
+                                if pcode_match:
+                                    temp_model = f"PCODE_{pcode_match.group(1)}"
+                                    logging.warning(f"[normalize] model name not found, using pcode as model: {temp_model}")
+                                    playwright_result = {"model": temp_model, "url": product_url}
+                                else:
+                                    logging.warning("[normalize] model name not found in detail page and no pcode")
                             else:
                                 logging.warning("[normalize] model name not found in detail page")
             finally:

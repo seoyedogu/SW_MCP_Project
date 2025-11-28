@@ -33,3 +33,21 @@ class CrawlResponse(BaseModel):
     success: bool
     message: str
 
+class ProductInfo(BaseModel):
+    """단일 제품의 정규화된 정보와 이미지"""
+    product_name: str
+    model_name: str
+    url: str
+    image_count: int
+    images: list[ImageData]
+
+class CompareProductsRequest(BaseModel):
+    product_names: list[str]  # 비교할 제품명 리스트
+
+class CompareProductsResponse(BaseModel):
+    """여러 제품 비교 결과"""
+    products: list[ProductInfo]  # 각 제품의 정보와 이미지
+    total_products: int
+    success: bool
+    message: str
+

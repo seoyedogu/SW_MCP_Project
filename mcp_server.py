@@ -115,6 +115,58 @@ TOOL_DEFINITIONS = {
             ],
         },
     ),
+    "compare_products": types.Tool(
+        name="compare_products",
+        description="두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환합니다. 각 제품의 정보와 이미지를 구조화하여 제공하므로 LLM이 공통점과 차이점을 분석할 수 있습니다.",
+        inputSchema={
+            "type": "object",
+            "properties": {
+                "product_names": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "비교할 제품명 리스트 (최소 2개 이상)",
+                    "minItems": 2,
+                }
+            },
+            "required": ["product_names"],
+        },
+        outputSchema={
+            "type": "object",
+            "properties": {
+                "products": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "product_name": {"type": "string"},
+                            "model_name": {"type": "string"},
+                            "url": {"type": "string"},
+                            "image_count": {"type": "integer"},
+                            "images": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "url": {"type": "string"},
+                                        "base64": {"type": "string"},
+                                        "mime_type": {"type": "string"},
+                                        "index": {"type": "integer"},
+                                        "original_size_bytes": {"type": "integer"},
+                                        "optimized_size_bytes": {"type": "integer"},
+                                    },
+                                },
+                            },
+                        },
+                        "required": ["product_name", "model_name", "url", "image_count", "images"],
+                    },
+                },
+                "total_products": {"type": "integer"},
+                "success": {"type": "boolean"},
+                "message": {"type": "string"},
+            },
+            "required": ["products", "total_products", "success", "message"],
+        },
+    ),
 }
 
 
@@ -129,7 +181,21 @@ def _normalize_product(product_name: str) -> dict[str, str]:
 
     result = convert_product_name_to_model(cleaned)
     if not result:
-        raise ValueError(f"'{cleaned}' 제품의 모델명을 찾지 못했습니다.")
+        # 더 상세한 오류 메시지 제공
+        error_msg = (
+            f"MCP 서버에서 \"{cleaned}\" 제품을 찾지 못했습니다.\n\n"
+            "몇 가지 가능성이 있습니다:\n"
+            "1. 정확한 제품명 확인 필요\n"
+            "   • 제품명이 정확하지 않을 수 있습니다\n"
+            f"   • \"{cleaned}\" 대신 다른 숫자나 명칭일 수 있습니다\n"
+            "   • 예: \"블루스카이 3100\" → \"블루스카이 3000\" 또는 \"블루스카이 3500\"\n"
+            "2. 제품명 변형 시도\n"
+            "   • 제조사명 포함 여부 확인 (예: \"삼성 전자 블루스카이 3100\")\n"
+            "   • 띄어쓰기 확인 (예: \"블루스카이3100\" vs \"블루스카이 3100\")\n"
+            "3. 다나와에서 직접 검색\n"
+            "   • 다나와 웹사이트에서 정확한 제품명을 확인해보세요"
+        )
+        raise ValueError(error_msg)
 
     _store_mapping(cleaned, result)
 
@@ -175,6 +241,66 @@ async def _crawl_product(product_name: str) -> dict[str, object]:
     }
 
 
+async def _compare_products(product_names: list[str]) -> dict[str, object]:
+    """여러 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환"""
+    if not product_names or len(product_names) < 2:
+        raise ValueError("최소 2개 이상의 제품명을 입력해주세요.")
+    
+    products_info = []
+    errors = []
+    
+    for product_name in product_names:
+        try:
+            # 1. 제품명 정규화
+            normalized = _normalize_product(product_name)
+            model_name = normalized["model_name"]
+            url = normalized["url"]
+            
+            # 2. 이미지 크롤링
+            images = await crawl_single_page(url)
+            
+            products_info.append({
+                "product_name": normalized["product_name"],
+                "model_name": model_name,
+                "url": url,
+                "image_count": len(images),
+                "images": images,
+            })
+        except ValueError as e:
+            # 정규화 실패 시 상세한 오류 메시지 포함
+            error_msg = f"제품 '{product_name}': {str(e)}"
+            errors.append(error_msg)
+            # 오류가 발생해도 다른 제품 처리는 계속 진행
+        except Exception as e:
+            error_msg = f"제품 '{product_name}' 처리 중 오류: {str(e)}"
+            errors.append(error_msg)
+            # 오류가 발생해도 다른 제품 처리는 계속 진행
+    
+    if not products_info:
+        all_errors = "\n".join(errors) if errors else "알 수 없는 오류"
+        raise ValueError(
+            f"모든 제품 처리에 실패했습니다.\n\n"
+            f"실패한 제품들:\n{all_errors}\n\n"
+            "해결 방법:\n"
+            "1. 각 제품명의 정확성을 확인하세요\n"
+            "2. 제조사명 포함 여부를 확인하세요\n"
+            "3. 다나와에서 직접 검색하여 정확한 제품명을 확인하세요"
+        )
+    
+    message = f"{len(products_info)}개 제품의 정보를 수집했습니다."
+    if errors:
+        message += f"\n\n주의: {len(errors)}개 제품 처리 실패:\n" + "\n".join(errors[:3])  # 최대 3개만 표시
+        if len(errors) > 3:
+            message += f"\n... 외 {len(errors) - 3}개"
+    
+    return {
+        "products": products_info,
+        "total_products": len(products_info),
+        "success": len(products_info) > 0,
+        "message": message,
+    }
+
+
 @server.list_tools()
 async def handle_list_tools():
     return list(TOOL_DEFINITIONS.values())
@@ -185,13 +311,20 @@ async def handle_call_tool(tool_name: str, arguments: dict[str, object]):
     if tool_name not in TOOL_DEFINITIONS:
         raise ValueError(f"알 수 없는 도구: {tool_name}")
 
-    product_name = str(arguments.get("product_name", "")).strip()
-
     if tool_name == "normalize_product_name":
+        product_name = str(arguments.get("product_name", "")).strip()
         return _normalize_product(product_name)
 
     if tool_name == "crawl_product_images":
+        product_name = str(arguments.get("product_name", "")).strip()
         return await _crawl_product(product_name)
+
+    if tool_name == "compare_products":
+        product_names_raw = arguments.get("product_names", [])
+        if not isinstance(product_names_raw, list):
+            raise ValueError("product_names는 리스트여야 합니다.")
+        product_names = [str(name).strip() for name in product_names_raw if str(name).strip()]
+        return await _compare_products(product_names)
 
     raise ValueError(f"핸들링되지 않은 도구: {tool_name}")
 

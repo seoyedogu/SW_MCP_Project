@@ -51,9 +51,21 @@ def normalize_product_name(request: schemas.ProductNameToModelRequest):
     result = convert_product_name_to_model(product_name)
     
     if not result:
+        # 더 상세한 오류 메시지 제공
+        error_detail = (
+            f"제품명 '{product_name}'에 대한 모델명을 찾을 수 없습니다.\n\n"
+            "가능한 원인:\n"
+            "1. 정확한 제품명 확인 필요\n"
+            f"   • \"{product_name}\" 대신 다른 숫자나 명칭일 수 있습니다\n"
+            "   • 예: \"블루스카이 3100\" → \"블루스카이 3000\" 또는 \"블루스카이 3500\"\n"
+            "2. 제품명 변형 시도\n"
+            "   • 제조사명 포함 여부 확인 (예: \"삼성 전자 블루스카이 3100\")\n"
+            "   • 띄어쓰기 확인\n"
+            "3. 다나와에서 직접 검색하여 정확한 제품명 확인"
+        )
         raise HTTPException(
             status_code=404,
-            detail=f"제품명 '{product_name}'에 대한 모델명을 찾을 수 없습니다."
+            detail=error_detail
         )
     
     model_name = result["model"]
@@ -137,6 +149,104 @@ async def crawl_product_images(request: schemas.CrawlRequest):
             status_code=500,
             detail=f"크롤링 중 오류가 발생했습니다: {error_detail}"
         )
+
+
+# 제품 비교 엔드포인트
+@app.post("/compare-products", response_model=schemas.CompareProductsResponse)
+async def compare_products(request: schemas.CompareProductsRequest):
+    """
+    여러 제품을 비교하기 위해 각 제품을 정규화하고 이미지를 수집하는 엔드포인트
+    
+    두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집합니다.
+    반환된 데이터를 통해 LLM이 공통점과 차이점을 분석할 수 있습니다.
+    
+    Args:
+        request: CompareProductsRequest (product_names: 제품명 리스트)
+    
+    Returns:
+        CompareProductsResponse: 각 제품의 정규화된 정보와 이미지 리스트
+    """
+    if not request.product_names or len(request.product_names) < 2:
+        raise HTTPException(
+            status_code=400,
+            detail="최소 2개 이상의 제품명을 입력해주세요."
+        )
+    
+    products_info = []
+    errors = []
+    
+    for product_name in request.product_names:
+        product_name = product_name.strip()
+        if not product_name:
+            continue
+            
+        try:
+            # 1. 제품명 정규화
+            result = convert_product_name_to_model(product_name)
+            if not result:
+                error_detail = (
+                    f"제품명 '{product_name}'에 대한 모델명을 찾을 수 없습니다.\n"
+                    "가능한 원인: 제품명이 정확하지 않거나, 다른 숫자/명칭일 수 있습니다."
+                )
+                errors.append(error_detail)
+                continue
+            
+            model_name = result["model"]
+            product_url = result["url"]
+            
+            # 메모리에 저장
+            product_name_to_model[product_name] = result
+            
+            # 2. 이미지 크롤링
+            print(f"[INFO] 크롤링 시작 - 제품명: {product_name}, URL: {product_url}")
+            images_data = await crawl_single_page(product_url)
+            print(f"[INFO] 크롤링 완료 - 제품명: {product_name}, 이미지 {len(images_data)}개 base64 인코딩 완료")
+            
+            products_info.append({
+                "product_name": product_name,
+                "model_name": model_name,
+                "url": product_url,
+                "image_count": len(images_data),
+                "images": images_data,
+            })
+        except Exception as e:
+            import traceback
+            error_detail = str(e)
+            error_traceback = traceback.format_exc()
+            print(f"[ERROR] 제품 '{product_name}' 처리 실패")
+            print(f"[ERROR] 오류 내용: {error_detail}")
+            print(f"[ERROR] 전체 트레이스백:")
+            print(error_traceback)
+            errors.append(f"제품 '{product_name}' 처리 중 오류: {error_detail}")
+            # 오류가 발생해도 다른 제품 처리는 계속 진행
+    
+    if not products_info:
+        all_errors = "\n".join(errors) if errors else "알 수 없는 오류"
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"모든 제품 처리에 실패했습니다.\n\n"
+                f"실패한 제품들:\n{all_errors}\n\n"
+                "해결 방법:\n"
+                "1. 각 제품명의 정확성을 확인하세요\n"
+                "2. 제조사명 포함 여부를 확인하세요 (예: \"삼성 전자 블루스카이 3100\")\n"
+                "3. 다나와에서 직접 검색하여 정확한 제품명을 확인하세요"
+            )
+        )
+    
+    message = f"{len(products_info)}개 제품의 정보를 수집했습니다."
+    if errors:
+        error_summary = "\n".join(errors[:3])  # 최대 3개만 표시
+        if len(errors) > 3:
+            error_summary += f"\n... 외 {len(errors) - 3}개 제품 처리 실패"
+        message += f"\n\n주의: {len(errors)}개 제품 처리 실패:\n{error_summary}"
+    
+    return {
+        "products": products_info,
+        "total_products": len(products_info),
+        "success": True,
+        "message": message,
+    }
 
 
 # 직접 실행 가능하도록 설정

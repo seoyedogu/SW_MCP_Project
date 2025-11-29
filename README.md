@@ -12,13 +12,22 @@
 1. **제품명 정규화**: 사용자 입력을 제조사 기준의 정식 모델명으로 변환
 2. **이미지 크롤링**: 다나와 등 쇼핑몰에서 제품 상세 페이지 이미지 수집
 3. **Base64 인코딩**: 크롤링한 이미지를 메모리에서 Base64로 인코딩하여 LLM이 접근 가능하도록 제공
+4. **제품 비교**: 여러 제품을 동시에 정규화하고 이미지를 수집하여 차이점 위주로 비교 분석
 
 ### 시스템 흐름
+
+#### 단일 제품 분석
 1. 사용자가 원하는 제품을 LLM 인터페이스에 자연어로 입력합니다.
 2. MCP 서버가 입력을 제조사 기준의 정식 모델명으로 정규화합니다.
 3. 정규화된 모델명을 이용해 각 제조사·유통사의 상세 페이지 이미지를 크롤링합니다.
 4. 이미지를 Base64로 인코딩하여 LLM에 전달합니다.
 5. LLM이 수집된 이미지를 분석해 주요 스펙, 장단점, 추천 여부 등을 도출합니다.
+
+#### 제품 비교 분석
+1. 사용자가 비교하고 싶은 여러 제품을 LLM 인터페이스에 입력합니다.
+2. MCP 서버가 각 제품을 정규화하고 이미지를 수집합니다.
+3. 수집된 정보를 구조화하여 LLM에 전달합니다.
+4. LLM이 제품 간 차이점(디자인, 특징, 가격대 등)을 중심으로 비교 분석합니다.
 
 ### 역할 분담
 - **MCP 서버**: 정규화·크롤링·데이터 가공까지의 파이프라인을 담당
@@ -89,6 +98,7 @@ SW_MCP_Project/
 │   │   ├── main.py                 # FastAPI 애플리케이션 및 REST API 엔드포인트
 │   │   ├── normalize_product_name.py  # 제품명 정규화 로직 (다나와 검색)
 │   │   ├── new_single_page_crawler.py # 이미지 크롤링 로직 (Playwright)
+│   │   ├── compare_products.py     # 제품 비교 로직 (정규화 + 이미지 수집)
 │   │   └── schemas.py              # Pydantic 스키마 정의
 │   └── requirements.txt            # FastAPI 서버 의존성
 ├── mcp_server.py                   # MCP 서버 엔트리포인트 (Claude 연동)
@@ -102,6 +112,7 @@ SW_MCP_Project/
 - **`fastapi/app/main.py`**: FastAPI REST API 서버. `/normalize-product-name`, `/crawl`, `/compare-products` 엔드포인트 제공
 - **`fastapi/app/normalize_product_name.py`**: 다나와에서 제품명 검색 및 모델명/URL 추출
 - **`fastapi/app/new_single_page_crawler.py`**: Playwright를 사용한 동적 페이지 크롤링 및 이미지 Base64 인코딩
+- **`fastapi/app/compare_products.py`**: 여러 제품을 비교하기 위한 비즈니스 로직. 제품 정규화 및 이미지 수집을 통합 처리
 - **`mcp_server.py`**: MCP 프로토콜을 통해 Claude와 통신하는 서버. FastAPI 로직을 MCP Tool로 노출
 - **`mcp_config.json`**: Claude Desktop/Cursor에서 MCP 서버를 등록하기 위한 설정 파일 예시
 
@@ -333,12 +344,14 @@ Claude가 자동으로 필요한 MCP Tool을 호출하여 제품 정보를 수�
 - 원본 및 최적화된 이미지 크기 정보 제공 (`original_size_bytes`, `optimized_size_bytes`)
 - Windows 이벤트 루프 문제 해결 (별도 스레드에서 실행)
 
-### 제품 비교 (`/compare-products` 엔드포인트 및 `compare_products` MCP Tool)
+### 제품 비교 (`compare_products.py`, `/compare-products` 엔드포인트 및 `compare_products` MCP Tool)
+- **모듈화된 구조**: `compare_products.py`에 비즈니스 로직을 분리하여 재사용성과 유지보수성 향상
 - 두 개 이상의 제품명을 입력받아 각 제품을 자동으로 정규화
 - 각 제품의 이미지를 수집하여 구조화된 형태로 반환
 - **차이점 위주 비교**: LLM이 제품 디자인, 특징, 가격대 등의 차이점을 중심으로 비교 분석
 - 비교 가이드 제공: 디자인, 특징, 가격대, 주요 차이점 등 비교 포인트 제시
 - 일부 제품 처리 실패 시에도 다른 제품 처리는 계속 진행
+- 에러 처리: 각 제품 처리 실패 시 상세한 오류 메시지 제공
 
 ## 환경 변수 설정
 

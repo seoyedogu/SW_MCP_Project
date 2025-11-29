@@ -52,39 +52,58 @@ source venv/bin/activate
 ```
 
 ### 3. 의존성 설치
+
+#### FastAPI 서버 의존성
 ```bash
 cd fastapi
 pip install -r requirements.txt
 ```
 
-### 4. MCP 서버 의존성 설치 (MCP 서버 사용 시)
+#### MCP 서버 의존성 (MCP 서버 사용 시)
 ```bash
 # 루트 디렉터리에서
 pip install mcp anyio
 ```
 
-### 5. Playwright 브라우저 설치
+또는 모든 의존성을 한 번에 설치:
+```bash
+# 루트 디렉터리에서
+pip install -r fastapi/requirements.txt
+pip install mcp anyio
+```
+
+### 4. Playwright 브라우저 설치
 ```bash
 playwright install chromium
 ```
+
+**참고**: Playwright는 이미지 크롤링에 사용되며, 비동기 방식으로 동작합니다.
 
 ## 프로젝트 구조
 
 ```
 SW_MCP_Project/
-├── fastapi/
+├── fastapi/                        # FastAPI 백엔드 서버
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py                 # FastAPI 애플리케이션 및 엔드포인트
-│   │   ├── normalize_product_name.py  # 제품명 정규화 로직
-│   │   ├── new_single_page_crawler.py # 이미지 크롤링 로직
+│   │   ├── main.py                 # FastAPI 애플리케이션 및 REST API 엔드포인트
+│   │   ├── normalize_product_name.py  # 제품명 정규화 로직 (다나와 검색)
+│   │   ├── new_single_page_crawler.py # 이미지 크롤링 로직 (Playwright)
 │   │   └── schemas.py              # Pydantic 스키마 정의
-│   └── requirements.txt
-├── mcp_server.py                   # MCP 서버 엔트리포인트
-├── mcp_config.json                  # MCP 서버 설정 파일
-├── README.md
-└── .gitignore
+│   └── requirements.txt            # FastAPI 서버 의존성
+├── mcp_server.py                   # MCP 서버 엔트리포인트 (Claude 연동)
+├── mcp_config.json                  # MCP 서버 설정 파일 (Claude Desktop/Cursor용)
+├── README.md                        # 프로젝트 문서
+└── .gitignore                       # Git 무시 파일
 ```
+
+### 주요 파일 설명
+
+- **`fastapi/app/main.py`**: FastAPI REST API 서버. `/normalize-product-name`, `/crawl`, `/compare-products` 엔드포인트 제공
+- **`fastapi/app/normalize_product_name.py`**: 다나와에서 제품명 검색 및 모델명/URL 추출
+- **`fastapi/app/new_single_page_crawler.py`**: Playwright를 사용한 동적 페이지 크롤링 및 이미지 Base64 인코딩
+- **`mcp_server.py`**: MCP 프로토콜을 통해 Claude와 통신하는 서버. FastAPI 로직을 MCP Tool로 노출
+- **`mcp_config.json`**: Claude Desktop/Cursor에서 MCP 서버를 등록하기 위한 설정 파일 예시
 
 ## API 엔드포인트
 
@@ -221,18 +240,78 @@ uvicorn app.main:app --reload
 서버는 기본적으로 `http://localhost:8000`에서 실행됩니다.
 
 ### 1-1. MCP 서버(Claude 연동) 실행
-1. 루트 디렉터리에서 MCP 의존성을 설치합니다.
+
+MCP 서버를 사용하면 Claude Desktop 또는 Cursor에서 직접 제품 정보를 분석할 수 있습니다.
+
+#### 설정 방법
+
+1. **MCP 의존성 설치** (아직 설치하지 않았다면)
    ```bash
    pip install mcp anyio
    ```
-2. `mcp_config.json` 파일의 내용을 Claude Desktop 또는 Cursor의 MCP 설정 파일에 추가합니다.
-   - Claude Desktop: `%APPDATA%\Claude\claude_desktop_config.json` (Windows) 또는 `~/Library/Application Support/Claude/claude_desktop_config.json` (Mac)
-   - Cursor: 설정에서 MCP 서버 추가
-3. MCP 서버는 STDIO 기반으로 자동 실행되며, `product-analyzer` 서버가 다음 세 가지 Tool을 제공합니다:
-   - `normalize_product_name`: 자연어 제품명을 제조사 모델명과 상품 URL로 정규화
-   - `crawl_product_images`: 저장된 제품 URL에서 이미지를 최대 4장까지 크롤링하여 Base64로 인코딩
-   - `compare_products`: 두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환 (공통점/차이점 분석을 위해 구조화된 데이터 제공)
-4. Claude에서의 실행 순서는 README 상단의 흐름(사용자 입력 → 모델명 정규화 → 이미지 크롤링 → Base64 전달 → LLM 분석)을 그대로 따르면 됩니다.
+
+2. **MCP 설정 파일에 서버 추가**
+
+   **Claude Desktop의 경우:**
+   - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+   - Mac: `~/Library/Application Support/Claude/claude_desktop_config.json`
+   - Linux: `~/.config/Claude/claude_desktop_config.json`
+   
+   설정 파일에 다음 내용을 추가하세요:
+   ```json
+   {
+     "mcpServers": {
+       "product-analyzer": {
+         "command": "python",
+         "args": ["mcp_server.py"],
+         "cwd": "C:\\Users\\home\\Desktop\\sw\\SW_MCP_Project",
+         "env": {}
+       }
+     }
+   }
+   ```
+   **주의**: `cwd` 경로를 실제 프로젝트 경로로 변경하세요.
+
+   **Cursor의 경우:**
+   - 설정에서 MCP 서버를 추가하거나
+   - `mcp_config.json` 파일의 내용을 Cursor의 MCP 설정에 복사하세요.
+
+3. **Claude Desktop/Cursor 재시작**
+   - 설정 파일을 수정한 후 Claude Desktop 또는 Cursor를 재시작해야 합니다.
+
+#### 제공되는 MCP Tools
+
+MCP 서버는 다음 세 가지 Tool을 제공합니다:
+
+1. **`normalize_product_name`**
+   - 자연어 제품명을 제조사 모델명과 상품 URL로 정규화
+   - 예: "삼성 블루스카이 5500" → 모델명 "AX060CG500G" + URL
+
+2. **`crawl_product_images`**
+   - 저장된 제품 URL에서 이미지를 최대 4장까지 크롤링
+   - Base64로 인코딩하여 Claude에 전달
+   - **주의**: 먼저 `normalize_product_name`을 호출해야 합니다.
+
+3. **`compare_products`**
+   - 두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지 수집
+   - 차이점 위주로 비교 분석할 수 있도록 구조화된 데이터 제공
+   - 디자인, 특징, 가격대 등의 차이점에 집중
+
+#### 사용 예시
+
+Claude에서 다음과 같이 사용할 수 있습니다:
+
+```
+"삼성 블루스카이 5500"과 "블루스카이 7000"을 비교해줘
+```
+
+또는 단일 제품 분석:
+
+```
+"삼성 블루스카이 5500" 제품에 대해 분석해줘
+```
+
+Claude가 자동으로 필요한 MCP Tool을 호출하여 제품 정보를 수집하고 분석합니다.
 
 ### 2. API 문서 확인
 브라우저에서 `http://localhost:8000/docs` 접속하여 Swagger UI에서 API를 테스트할 수 있습니다.
@@ -261,12 +340,54 @@ uvicorn app.main:app --reload
 - 비교 가이드 제공: 디자인, 특징, 가격대, 주요 차이점 등 비교 포인트 제시
 - 일부 제품 처리 실패 시에도 다른 제품 처리는 계속 진행
 
+## 환경 변수 설정
+
+Claude와 연동 시 이미지 처리 옵션을 환경 변수로 조절할 수 있습니다:
+
+- `LLM_IMAGE_MAX_COUNT`: 최대 이미지 개수 (기본값: 4)
+- `LLM_IMAGE_MAX_BYTES`: 최대 이미지 크기 (바이트 단위)
+- `LLM_IMAGE_MAX_DIMENSION`: 최대 이미지 차원 (픽셀 단위)
+
+예시:
+```bash
+# Windows PowerShell
+$env:LLM_IMAGE_MAX_COUNT=6
+$env:LLM_IMAGE_MAX_BYTES=1048576
+
+# Linux/Mac
+export LLM_IMAGE_MAX_COUNT=6
+export LLM_IMAGE_MAX_BYTES=1048576
+```
+
 ## 주의사항
 
-- Windows 환경에서는 Playwright 실행 시 이벤트 루프 문제가 발생할 수 있어 별도 스레드에서 실행하도록 구현되어 있습니다.
-- 크롤링된 이미지는 메모리에서 Base64로 인코딩되어 반환되며, 파일로 저장되지 않습니다.
-- Claude와 연동 시 `LLM_IMAGE_MAX_COUNT`, `LLM_IMAGE_MAX_BYTES`, `LLM_IMAGE_MAX_DIMENSION` 환경변수로 이미지 개수‧용량을 상황에 맞게 조절할 수 있습니다.
-- 제품명은 먼저 `/normalize-product-name` 엔드포인트로 등록한 후 `/crawl` 엔드포인트를 사용해야 합니다.
+### 일반 주의사항
+- **Windows 환경**: Playwright 실행 시 이벤트 루프 문제가 발생할 수 있어 별도 스레드에서 실행하도록 구현되어 있습니다.
+- **이미지 저장**: 크롤링된 이미지는 메모리에서 Base64로 인코딩되어 반환되며, 파일로 저장되지 않습니다.
+- **API 사용 순서**: 제품명은 먼저 `/normalize-product-name` 엔드포인트로 등록한 후 `/crawl` 엔드포인트를 사용해야 합니다.
+
+### MCP 서버 사용 시 주의사항
+- **경로 설정**: `mcp_config.json` 또는 Claude Desktop 설정 파일의 `cwd` 경로를 실제 프로젝트 경로로 정확히 설정해야 합니다.
+- **Python 경로**: `command`가 "python"인 경우, 가상환경이 활성화된 상태에서 실행되도록 설정하거나 절대 경로를 사용하세요.
+- **의존성**: MCP 서버 실행 전에 모든 의존성(특히 `mcp`, `anyio`, Playwright)이 설치되어 있어야 합니다.
+
+### 문제 해결
+
+#### 제품을 찾을 수 없는 경우
+1. 제품명의 정확성을 확인하세요 (띄어쓰기, 숫자 등)
+2. 제조사명 포함 여부를 확인하세요 (예: "삼성 전자 블루스카이 5500")
+3. 다나와에서 직접 검색하여 정확한 제품명을 확인하세요
+
+#### MCP 서버가 작동하지 않는 경우
+1. Claude Desktop/Cursor를 재시작하세요
+2. 설정 파일의 경로가 올바른지 확인하세요
+3. Python 가상환경이 활성화되어 있는지 확인하세요
+4. 모든 의존성이 설치되어 있는지 확인하세요 (`pip list`로 확인)
+
+#### 크롤링 실패 시
+1. 인터넷 연결을 확인하세요
+2. Playwright 브라우저가 설치되어 있는지 확인하세요 (`playwright install chromium`)
+3. 다나와 웹사이트 접근이 가능한지 확인하세요
 
 ## 커밋 규칙
 - `feat: ...` 새로운 기능 추가
@@ -281,3 +402,4 @@ uvicorn app.main:app --reload
 - 커밋 메시지는 한국어 혹은 영어 중 하나로 일관성을 유지합니다.
 - 이슈 번호가 있다면 `feat: #12 사용자 인증 추가`처럼 메시지에 포함합니다.
 - PR 전에는 `git status`, `git diff`로 변경 내역을 반드시 확인합니다.
+

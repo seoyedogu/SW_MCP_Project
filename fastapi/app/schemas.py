@@ -49,6 +49,7 @@ class ComparisonHint(BaseModel):
     focus: str
     comparison_points: list[str]
     note: str
+    output_format: str | None = None  # 출력 형식에 대한 지시
 
 class CompareProductsResponse(BaseModel):
     """여러 제품 비교 결과"""

@@ -254,30 +254,128 @@ function displayCompareResult(data) {
     document.getElementById('compare-result').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// 분석 텍스트 포맷팅 (마크다운 형식 지원)
+// 분석 텍스트 포맷팅 (섹션 카드 형태)
 function formatAnalysisText(text) {
     if (!text) return '';
 
-    // 기본 마크다운 변환
-    let formatted = text
-        // 헤더 변환
-        .replace(/^### (.*$)/gim, '<h4>$1</h4>')
-        .replace(/^## (.*$)/gim, '<h4>$1</h4>')
-        .replace(/^# (.*$)/gim, '<h4>$1</h4>')
-        // 볼드 변환
-        .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
-        // 리스트 변환
-        .replace(/^\d+\.\s+(.*$)/gim, '<li>$1</li>')
-        .replace(/^[-*]\s+(.*$)/gim, '<li>$1</li>')
-        // 줄바꿈
-        .replace(/\n\n/g, '</p><p>')
-        .replace(/\n/g, '<br>');
+    const normalized = text.replace(/\r\n/g, '\n').trim();
+    if (!normalized) return '';
 
-    // 리스트 항목을 ul 태그로 감싸기
-    formatted = formatted.replace(/(<li>.*<\/li>)/g, '<ul>$1</ul>');
-    formatted = formatted.replace(/<\/ul>\s*<ul>/g, '');
+    const rawBlocks = normalized.split(/\n\s*\n/).filter(block => block.trim().length > 0);
+    const mergedBlocks = mergeHeadingBlocks(rawBlocks);
 
-    return `<p>${formatted}</p>`;
+    const sections = mergedBlocks.map((block, index) => {
+        const { title, body } = extractSection(block, index);
+        return `
+            <section class="analysis-section">
+                <div class="analysis-section-header">
+                    <span class="analysis-section-index">${String(index + 1).padStart(2, '0')}</span>
+                    <h4>${title}</h4>
+                </div>
+                <div class="analysis-section-body">
+                    ${convertMarkdown(body)}
+                </div>
+            </section>
+        `;
+    });
+
+    return `<div class="analysis-grid">${sections.join('')}</div>`;
 }
 
+function mergeHeadingBlocks(blocks) {
+    const merged = [];
+    for (let i = 0; i < blocks.length; i++) {
+        const current = blocks[i].trim();
+        const next = blocks[i + 1] ? blocks[i + 1].trim() : '';
+        const isHeadingOnly = current.split('\n').length === 1 && !/^[-*•\d]/.test(current);
 
+        if (isHeadingOnly && next) {
+            merged.push(`${current}\n${next}`.trim());
+            i++; // skip next because merged
+        } else {
+            merged.push(current);
+        }
+    }
+    return merged;
+}
+
+function extractSection(block, index) {
+    const lines = block.split('\n').map(line => line.trim()).filter(Boolean);
+    if (!lines.length) {
+        return {
+            title: `섹션 ${String(index + 1).padStart(2, '0')}`,
+            body: block
+        };
+    }
+
+    const firstLine = lines[0];
+    let title = '';
+    let bodyLines = lines.slice(1);
+
+    const headingMatch = firstLine.match(/^#{1,6}\s*(.+)$/);
+    const boldMatch = firstLine.match(/^\*\*(.+)\*\*$/);
+    const colonMatch = firstLine.match(/^(.+?)[：:]\s*$/);
+    const simpleTitle = /^[^\-\*\d]{2,20}$/u.test(firstLine);
+
+    if (headingMatch) {
+        title = headingMatch[1].trim();
+    } else if (boldMatch) {
+        title = boldMatch[1].trim();
+    } else if (colonMatch) {
+        title = colonMatch[1].trim();
+    } else if (simpleTitle && lines.length > 1) {
+        title = firstLine.trim();
+    }
+
+    if (!title) {
+        title = `섹션 ${String(index + 1).padStart(2, '0')}`;
+        bodyLines = lines;
+    } else if (!bodyLines.length) {
+        bodyLines = lines;
+    }
+
+    return {
+        title,
+        body: bodyLines.join('\n').trim()
+    };
+}
+
+function convertMarkdown(text) {
+    if (!text) return '';
+
+    let content = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    const lines = content.split('\n');
+    let html = '';
+    let inList = false;
+
+    lines.forEach(line => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            if (inList) return;
+            html += '';
+            return;
+        }
+
+        const isListItem = /^[-*•]\s+/.test(trimmed) || /^\d+\.\s+/.test(trimmed);
+        if (isListItem) {
+            if (!inList) {
+                inList = true;
+                html += '<ul>';
+            }
+            const itemText = trimmed.replace(/^[-*•]\s+/, '').replace(/^\d+\.\s+/, '');
+            html += `<li>${itemText}</li>`;
+        } else {
+            if (inList) {
+                html += '</ul>';
+                inList = false;
+            }
+            html += `<p>${trimmed}</p>`;
+        }
+    });
+
+    if (inList) {
+        html += '</ul>';
+    }
+
+    return html || `<p>${text}</p>`;
+}

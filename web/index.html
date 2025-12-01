@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>제품 정보 수집 및 분석 시스템</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🛍️ 제품 정보 수집 및 분석 시스템</h1>
+            <p class="subtitle">OpenAI GPT-4.1 mini를 활용한 제품 분석 및 비교 서비스</p>
+        </header>
+
+        <main>
+            <!-- 탭 네비게이션 -->
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="analyze">제품 분석</button>
+                <button class="tab-btn" data-tab="compare">제품 비교</button>
+            </div>
+
+            <!-- 제품 분석 탭 -->
+            <div id="analyze-tab" class="tab-content active">
+                <div class="card">
+                    <h2>제품 분석</h2>
+                    <p class="description">제품명을 입력하면 이미지를 크롤링하고 OpenAI GPT-4.1 mini를 통해 자동으로 분석합니다. 분석 결과는 JSON 파일로 저장되고 웹에서 보기 좋게 표시됩니다.</p>
+                    
+                    <div class="input-group">
+                        <label for="product-name">제품명</label>
+                        <input 
+                            type="text" 
+                            id="product-name" 
+                            placeholder="예: 삼성 블루스카이 5500"
+                            class="input-field"
+                        >
+                    </div>
+
+                    <div class="input-group">
+                        <label for="analysis-type">분석 유형</label>
+                        <select id="analysis-type" class="input-field">
+                            <option value="general">일반 분석 (간결한 요약)</option>
+                            <option value="detailed">상세 분석 (5가지 항목 상세 분석)</option>
+                        </select>
+                    </div>
+                    <p class="description-small" style="font-size: 0.875rem; color: var(--text-secondary); margin-top: 0.5rem;">
+                        <strong>일반 분석:</strong> 핵심 특징, 장단점, 구매 추천을 간결하게 요약<br>
+                        <strong>상세 분석:</strong> 특징/스펙, 디자인, 장점, 단점, 구매 추천을 상세히 분석
+                    </p>
+
+                    <button id="analyze-btn" class="btn btn-primary">
+                        <span class="btn-text">분석 시작</span>
+                        <span class="btn-loader" style="display: none;">분석 중...</span>
+                    </button>
+
+                    <div id="analyze-result" class="result-container" style="display: none;">
+                        <h3>분석 결과</h3>
+                        <div class="product-info">
+                            <div class="info-item">
+                                <span class="info-label">제품명:</span>
+                                <span id="result-product-name" class="info-value"></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">모델명:</span>
+                                <span id="result-model-name" class="info-value"></span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">상세 페이지:</span>
+                                <a id="result-url" href="#" target="_blank" class="info-link"></a>
+                            </div>
+                        </div>
+                        <div id="analyze-analysis" class="analysis-content"></div>
+                        <details class="json-data-section">
+                            <summary>JSON 데이터 보기</summary>
+                            <pre id="analyze-json-data" class="json-data"></pre>
+                        </details>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 제품 비교 탭 -->
+            <div id="compare-tab" class="tab-content">
+                <div class="card">
+                    <h2>제품 비교</h2>
+                    <p class="description">두 개 이상의 제품을 입력하면 이미지를 크롤링하고 OpenAI GPT-4.1 mini를 통해 자동으로 비교 분석합니다. 분석 결과는 JSON 파일로 저장되고 웹에서 보기 좋게 표시됩니다.</p>
+                    
+                    <div class="input-group">
+                        <label for="product-names">제품명 (쉼표로 구분)</label>
+                        <textarea 
+                            id="product-names" 
+                            placeholder="예: 삼성 블루스카이 5500, 블루스카이 7000"
+                            class="input-field"
+                            rows="3"
+                        ></textarea>
+                    </div>
+
+                    <button id="compare-btn" class="btn btn-primary">
+                        <span class="btn-text">비교 시작</span>
+                        <span class="btn-loader" style="display: none;">비교 중...</span>
+                    </button>
+
+                    <div id="compare-result" class="result-container" style="display: none;">
+                        <h3>비교 결과</h3>
+                        <div id="compare-products" class="products-grid"></div>
+                        <div id="compare-analysis" class="analysis-content"></div>
+                        <details class="json-data-section">
+                            <summary>JSON 데이터 보기</summary>
+                            <pre id="compare-json-data" class="json-data"></pre>
+                        </details>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 로딩 오버레이 -->
+            <div id="loading-overlay" class="loading-overlay" style="display: none;">
+                <div class="spinner"></div>
+                <p class="loading-text">처리 중입니다. 잠시만 기다려주세요...</p>
+            </div>
+
+            <!-- 에러 메시지 -->
+            <div id="error-message" class="error-message" style="display: none;"></div>
+        </main>
+
+        <footer>
+            <p>© 2025 제품 정보 수집 및 분석 시스템 | Powered by OpenAI GPT-4.1 mini</p>
+        </footer>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+

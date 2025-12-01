@@ -59,3 +59,30 @@ class CompareProductsResponse(BaseModel):
     message: str
     comparison_hint: ComparisonHint | None = None  # 비교를 위한 가이드
 
+class AnalyzeProductRequest(BaseModel):
+    """제품 분석 요청"""
+    product_name: str
+    analysis_type: str = "general"  # "general", "detailed", "comparison"
+
+class AnalyzeProductResponse(BaseModel):
+    """제품 분석 응답"""
+    product_name: str
+    model_name: str
+    url: str
+    analysis: str
+    success: bool
+    message: str
+    json_file: str | None = None  # 저장된 JSON 파일 경로
+
+class CompareWithAIRequest(BaseModel):
+    """AI를 통한 제품 비교 요청"""
+    product_names: list[str]
+
+class CompareWithAIResponse(BaseModel):
+    """AI를 통한 제품 비교 응답"""
+    products: list[ProductInfo]
+    comparison_analysis: str
+    success: bool
+    message: str
+    json_file: str | None = None  # 저장된 JSON 파일 경로
+

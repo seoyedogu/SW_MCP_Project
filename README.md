@@ -8,6 +8,8 @@
 
 **목표**: 사용자가 특정 제품의 구매 여부를 판단할 수 있도록 세부 정보를 빠르게 수집·가공해 주는 MCP 서버를 구현합니다.
 
+**✨ API 키 불필요**: MCP 서버는 Claude Desktop이나 Cursor에서 사용할 때 **별도의 API 키가 필요하지 않습니다**. Claude Desktop/Cursor가 자체적으로 Claude API를 처리하므로, MCP 서버는 데이터만 수집하여 Claude에게 전달하면 됩니다.
+
 ### 주요 기능
 1. **제품명 정규화**: 사용자 입력을 제조사 기준의 정식 모델명으로 변환
 2. **이미지 크롤링**: 다나와 등 쇼핑몰에서 제품 상세 페이지 이미지 수집
@@ -68,6 +70,8 @@ cd fastapi
 pip install -r requirements.txt
 ```
 
+**참고:** `python-dotenv`가 설치되어 있으면 `.env` 파일을 자동으로 로드합니다.
+
 #### MCP 서버 의존성 (MCP 서버 사용 시)
 ```bash
 # 루트 디렉터리에서
@@ -99,8 +103,13 @@ SW_MCP_Project/
 │   │   ├── normalize_product_name.py  # 제품명 정규화 로직 (다나와 검색)
 │   │   ├── new_single_page_crawler.py # 이미지 크롤링 로직 (Playwright)
 │   │   ├── compare_products.py     # 제품 비교 로직 (정규화 + 이미지 수집)
+│   │   ├── image_encoder.py        # 이미지 Base64 인코딩 및 최적화
 │   │   └── schemas.py              # Pydantic 스키마 정의
 │   └── requirements.txt            # FastAPI 서버 의존성
+├── web/                            # 웹 인터페이스
+│   ├── index.html                  # 메인 HTML 파일
+│   ├── styles.css                  # CSS 스타일시트
+│   └── app.js                     # JavaScript 애플리케이션 로직
 ├── mcp_server.py                   # MCP 서버 엔트리포인트 (Claude 연동)
 ├── mcp_config.json                  # MCP 서버 설정 파일 (Claude Desktop/Cursor용)
 ├── README.md                        # 프로젝트 문서
@@ -115,6 +124,22 @@ SW_MCP_Project/
 - **`fastapi/app/compare_products.py`**: 여러 제품을 비교하기 위한 비즈니스 로직. 제품 정규화 및 이미지 수집을 통합 처리
 - **`mcp_server.py`**: MCP 프로토콜을 통해 Claude와 통신하는 서버. FastAPI 로직을 MCP Tool로 노출
 - **`mcp_config.json`**: Claude Desktop/Cursor에서 MCP 서버를 등록하기 위한 설정 파일 예시
+
+## 웹 인터페이스
+
+서버 실행 후 `http://localhost:8000`에 접속하면 웹 인터페이스를 사용할 수 있습니다.
+
+### 주요 기능
+
+1. **제품 분석**
+   - 제품명을 입력하고 분석 유형(일반/상세)을 선택
+   - Claude AI가 제품 이미지와 정보를 바탕으로 상세 분석 제공
+   - 제품명, 모델명, 상세 페이지 링크 및 분석 결과 표시
+
+2. **제품 비교**
+   - 두 개 이상의 제품명을 쉼표로 구분하여 입력
+   - Claude AI가 제품 간 차이점을 중심으로 비교 분석 제공
+   - 각 제품의 정보와 비교 분석 결과 표시
 
 ## API 엔드포인트
 
@@ -185,6 +210,65 @@ SW_MCP_Project/
 ### 3. 제품 비교
 **POST** `/compare-products`
 
+### 4. 제품 분석 (OpenAI GPT)
+**POST** `/analyze-product`
+
+OpenAI GPT API를 사용하여 제품을 분석합니다.
+
+**Request:**
+```json
+{
+  "product_name": "삼성 블루스카이 5500",
+  "analysis_type": "general"
+}
+```
+
+**Response:**
+```json
+{
+  "product_name": "삼성 블루스카이 5500",
+  "model_name": "AX060CG500G",
+  "url": "http://prod.danawa.com/info/...",
+  "analysis": "OpenAI GPT가 생성한 제품 분석 결과...",
+  "success": true,
+  "message": "제품 '삼성 블루스카이 5500' 분석이 완료되었습니다."
+}
+```
+
+### 5. AI 기반 제품 비교
+**POST** `/compare-with-ai`
+
+OpenAI GPT API를 사용하여 여러 제품을 비교 분석합니다.
+
+**Request:**
+```json
+{
+  "product_names": ["삼성 블루스카이 5500", "블루스카이 7000"]
+}
+```
+
+**Response:**
+```json
+{
+  "products": [
+    {
+      "product_name": "삼성 블루스카이 5500",
+      "model_name": "AX060CG500G",
+      "url": "http://prod.danawa.com/info/...",
+      "image_count": 2,
+      "images": [...]
+    },
+    ...
+  ],
+  "comparison_analysis": "OpenAI GPT가 생성한 제품 비교 분석 결과...",
+  "success": true,
+  "message": "2개 제품의 비교 분석이 완료되었습니다."
+}
+```
+
+### 6. 제품 비교 (기본)
+**POST** `/compare-products`
+
 두 개 이상의 제품명을 입력받아 각 제품을 정규화하고 이미지를 수집하여 비교 가능한 형태로 반환합니다.
 
 **Request:**
@@ -240,7 +324,40 @@ SW_MCP_Project/
 
 ## 사용 방법
 
-### 1. 서버 실행
+### 1. 환경 변수 설정
+
+OpenAI GPT API를 사용하기 위해 `OPENAI_API_KEY` 환경 변수를 설정해야 합니다.
+
+#### 방법 1: .env 파일 사용 (권장)
+
+프로젝트 루트 디렉토리 또는 `fastapi` 폴더에 `.env` 파일을 생성하고 다음 내용을 추가하세요:
+
+```env
+OPENAI_API_KEY=your-api-key-here
+```
+
+**참고:** `env.example` 파일을 참고하여 `.env` 파일을 생성할 수 있습니다.
+
+#### 방법 2: 환경 변수로 직접 설정
+
+**Windows PowerShell:**
+```powershell
+$env:OPENAI_API_KEY="your-api-key-here"
+```
+
+**Windows CMD:**
+```cmd
+set OPENAI_API_KEY=your-api-key-here
+```
+
+**Linux/Mac:**
+```bash
+export OPENAI_API_KEY="your-api-key-here"
+```
+
+**OpenAI API 키 발급:** https://platform.openai.com/api-keys 에서 API 키를 발급받을 수 있습니다.
+
+### 2. 서버 실행
 ```bash
 cd fastapi
 python -m app.main
@@ -250,11 +367,21 @@ uvicorn app.main:app --reload
 
 서버는 기본적으로 `http://localhost:8000`에서 실행됩니다.
 
-### 1-1. MCP 서버(Claude 연동) 실행
+### 3. 웹페이지 접속
+
+서버 실행 후 브라우저에서 `http://localhost:8000`에 접속하면 웹 인터페이스를 사용할 수 있습니다.
+
+**주요 기능:**
+- **제품 분석**: 제품명을 입력하면 OpenAI GPT가 제품을 상세히 분석합니다.
+- **제품 비교**: 두 개 이상의 제품을 입력하면 OpenAI GPT가 차이점을 중심으로 비교 분석합니다.
+
+### 4. MCP 서버(Claude 연동) 실행
 
 MCP 서버를 사용하면 Claude Desktop 또는 Cursor에서 직접 제품 정보를 분석할 수 있습니다.
 
 #### 설정 방법
+
+**⚠️ 중요**: MCP 서버는 **API 키 없이** 작동합니다! Claude Desktop/Cursor가 자체적으로 Claude API를 처리하므로 별도의 API 키 설정이 필요하지 않습니다.
 
 1. **MCP 의존성 설치** (아직 설치하지 않았다면)
    ```bash
@@ -324,6 +451,18 @@ Claude에서 다음과 같이 사용할 수 있습니다:
 
 Claude가 자동으로 필요한 MCP Tool을 호출하여 제품 정보를 수집하고 분석합니다.
 
+**💡 작동 원리**:
+1. 사용자가 Claude Desktop/Cursor에서 제품명을 입력
+2. Claude가 자동으로 MCP Tool (`normalize_product_name`, `crawl_product_images` 등) 호출
+3. MCP 서버가 다나와에서 제품 정보와 이미지를 수집
+4. 수집된 데이터를 Claude에게 전달
+5. Claude가 이미지와 정보를 분석하여 사용자에게 결과 제공
+
+**✅ 장점**:
+- **API 키 불필요**: Claude Desktop/Cursor가 자체적으로 Claude API를 처리하므로 별도의 API 키 설정이 필요 없습니다
+- **무료 사용**: Claude Desktop의 무료 사용량 내에서 사용 가능
+- **자동화**: 사용자가 직접 API를 호출할 필요 없이 자연어로만 요청하면 됩니다
+
 ### 2. API 문서 확인
 브라우저에서 `http://localhost:8000/docs` 접속하여 Swagger UI에서 API를 테스트할 수 있습니다.
 
@@ -355,6 +494,12 @@ Claude가 자동으로 필요한 MCP Tool을 호출하여 제품 정보를 수�
 
 ## 환경 변수 설정
 
+### 필수 환경 변수
+
+- `OPENAI_API_KEY`: OpenAI API 키 (웹페이지에서 AI 분석 기능 사용 시 필수)
+
+### 선택적 환경 변수
+
 Claude와 연동 시 이미지 처리 옵션을 환경 변수로 조절할 수 있습니다:
 
 - `LLM_IMAGE_MAX_COUNT`: 최대 이미지 개수 (기본값: 4)
@@ -364,10 +509,12 @@ Claude와 연동 시 이미지 처리 옵션을 환경 변수로 조절할 수 �
 예시:
 ```bash
 # Windows PowerShell
+$env:OPENAI_API_KEY="your-api-key-here"
 $env:LLM_IMAGE_MAX_COUNT=6
 $env:LLM_IMAGE_MAX_BYTES=1048576
 
 # Linux/Mac
+export OPENAI_API_KEY="your-api-key-here"
 export LLM_IMAGE_MAX_COUNT=6
 export LLM_IMAGE_MAX_BYTES=1048576
 ```

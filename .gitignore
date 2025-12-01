@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 
+# 환경 변수 파일
+.env
+.env.local
+
 # 다운로드된 이미지 파일
 downloads/
 

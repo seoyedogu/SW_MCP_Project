@@ -1,5 +1,6 @@
 import logging
 import re
+import concurrent.futures
 from urllib.parse import urljoin
 
 import requests
@@ -150,9 +151,9 @@ def _search_with_requests(search_url: str, user_agent: str) -> dict[str, str] | 
     return None
 
 
-def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | None:
+def _search_danawa_internal(search_keyword: str) -> dict[str, str] | None:
     """
-    다나와에서 검색하여 모델명과 URL을 추출하는 함수
+    다나와에서 검색하여 모델명과 URL을 추출하는 내부 함수 (별도 스레드에서 실행)
     
     Args:
         search_keyword: 검색 키워드
@@ -364,6 +365,34 @@ def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | Non
     except Exception as exc:  # noqa: BLE001
         logging.error("[normalize-fallback] request parsing failed: %s", exc, exc_info=True)
         return None
+
+
+def search_danawa_and_extract_model(search_keyword: str) -> dict[str, str] | None:
+    """
+    다나와에서 검색하여 모델명과 URL을 추출하는 함수
+    asyncio 루프에서 호출될 수 있으므로 별도 스레드에서 실행
+    
+    Args:
+        search_keyword: 검색 키워드
+    
+    Returns:
+        {"model": "모델명", "url": "URL"} 또는 None
+    """
+    # asyncio 루프가 실행 중인지 확인
+    try:
+        import asyncio
+        asyncio.get_running_loop()
+        # asyncio 루프가 실행 중이면 별도 스레드에서 실행
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_search_danawa_internal, search_keyword)
+            return future.result(timeout=30)  # 30초 타임아웃
+    except RuntimeError:
+        # asyncio 루프가 없으면 직접 실행 (동기 컨텍스트)
+        return _search_danawa_internal(search_keyword)
+    except Exception as exc:
+        logging.error("[normalize] thread execution error: %s", exc, exc_info=True)
+        # 실패 시 직접 실행 시도
+        return _search_danawa_internal(search_keyword)
 
 
 def convert_product_name_to_model(product_name: str) -> dict[str, str] | None:

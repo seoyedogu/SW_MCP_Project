@@ -4,11 +4,11 @@
 
 ## 프로젝트 개요
 
-### MCP 서버 - 제품 정보 수집 및 분석 시스템
+### 제품 정보 수집 및 분석 시스템
 
-**목표**: 사용자가 특정 제품의 구매 여부를 판단할 수 있도록 세부 정보를 빠르게 수집·가공해 주는 MCP 서버를 구현합니다.
+**목표**: 사용자가 특정 제품의 구매 여부를 판단할 수 있도록 세부 정보를 빠르게 수집·가공하고, OpenAI GPT-4.1 mini를 통해 자동으로 분석하는 시스템을 구현합니다.
 
-**✨ API 키 불필요**: MCP 서버는 Claude Desktop이나 Cursor에서 사용할 때 **별도의 API 키가 필요하지 않습니다**. Claude Desktop/Cursor가 자체적으로 Claude API를 처리하므로, MCP 서버는 데이터만 수집하여 Claude에게 전달하면 됩니다.
+**🤖 AI 분석**: OpenAI GPT-4.1 mini를 사용하여 제품 이미지와 정보를 자동으로 분석합니다. 분석 결과는 JSON 파일로 저장되고 웹에서 보기 좋게 표시됩니다.
 
 ### 주요 기능
 1. **제품명 정규화**: 사용자 입력을 제조사 기준의 정식 모델명으로 변환
@@ -19,26 +19,30 @@
 ### 시스템 흐름
 
 #### 단일 제품 분석
-1. 사용자가 원하는 제품을 LLM 인터페이스에 자연어로 입력합니다.
-2. MCP 서버가 입력을 제조사 기준의 정식 모델명으로 정규화합니다.
-3. 정규화된 모델명을 이용해 각 제조사·유통사의 상세 페이지 이미지를 크롤링합니다.
-4. 이미지를 Base64로 인코딩하여 LLM에 전달합니다.
-5. LLM이 수집된 이미지를 분석해 주요 스펙, 장단점, 추천 여부 등을 도출합니다.
+1. 사용자가 웹 인터페이스에서 제품명을 입력하고 분석 유형(일반/상세)을 선택합니다.
+2. 시스템이 제품명을 제조사 기준의 정식 모델명으로 정규화합니다.
+3. 정규화된 모델명을 이용해 다나와 상세 페이지에서 이미지를 크롤링합니다.
+4. 이미지를 Base64로 인코딩하여 OpenAI GPT-4.1 mini에 전달합니다.
+5. GPT-4.1 mini가 수집된 이미지를 분석해 주요 스펙, 장단점, 추천 여부 등을 도출합니다.
+6. 분석 결과를 JSON 파일로 저장하고 웹에서 보기 좋게 표시합니다.
 
 #### 제품 비교 분석
-1. 사용자가 비교하고 싶은 여러 제품을 LLM 인터페이스에 입력합니다.
-2. MCP 서버가 각 제품을 정규화하고 이미지를 수집합니다.
-3. 수집된 정보를 구조화하여 LLM에 전달합니다.
-4. LLM이 제품 간 차이점(디자인, 특징, 가격대 등)을 중심으로 비교 분석합니다.
+1. 사용자가 웹 인터페이스에서 비교하고 싶은 여러 제품명을 입력합니다.
+2. 시스템이 각 제품을 정규화하고 이미지를 수집합니다.
+3. 수집된 정보를 구조화하여 OpenAI GPT-4.1 mini에 전달합니다.
+4. GPT-4.1 mini가 제품 간 차이점(디자인, 특징, 가격대 등)을 중심으로 비교 분석합니다.
+5. 비교 분석 결과를 JSON 파일로 저장하고 웹에서 보기 좋게 표시합니다.
 
 ### 역할 분담
-- **MCP 서버**: 정규화·크롤링·데이터 가공까지의 파이프라인을 담당
-- **프런트/클라이언트**: 결과를 시각화해 사용자의 의사결정을 돕습니다.
+- **FastAPI 서버**: 정규화·크롤링·데이터 가공 및 OpenAI GPT-4.1 mini API 호출
+- **웹 인터페이스**: 사용자 입력을 받고 분석 결과를 시각화하여 표시
+- **MCP 서버** (선택): Claude Desktop/Cursor에서 사용 가능 (API 키 불필요)
 
 ## 기술 스택
 
 - **Backend**: FastAPI
-- **MCP Server**: fastmcp (Anthropic Claude MCP 프로토콜)
+- **AI 모델**: OpenAI GPT-4.1 mini (gpt-4o-mini)
+- **MCP Server**: fastmcp (Claude Desktop/Cursor 연동용, 선택사항)
 - **Web Scraping**: Playwright (비동기)
 - **Data Processing**: Python 3.x
 - **API**: RESTful API
@@ -110,8 +114,10 @@ SW_MCP_Project/
 │   ├── index.html                  # 메인 HTML 파일
 │   ├── styles.css                  # CSS 스타일시트
 │   └── app.js                     # JavaScript 애플리케이션 로직
-├── mcp_server.py                   # MCP 서버 엔트리포인트 (Claude 연동)
+├── mcp_server.py                   # MCP 서버 엔트리포인트 (Claude Desktop/Cursor 연동용, 선택사항)
 ├── mcp_config.json                  # MCP 서버 설정 파일 (Claude Desktop/Cursor용)
+├── analysis_results/                # 분석 결과 JSON 파일 저장 디렉토리
+├── env.example                      # 환경 변수 예시 파일
 ├── README.md                        # 프로젝트 문서
 └── .gitignore                       # Git 무시 파일
 ```
@@ -122,8 +128,8 @@ SW_MCP_Project/
 - **`fastapi/app/normalize_product_name.py`**: 다나와에서 제품명 검색 및 모델명/URL 추출
 - **`fastapi/app/new_single_page_crawler.py`**: Playwright를 사용한 동적 페이지 크롤링 및 이미지 Base64 인코딩
 - **`fastapi/app/compare_products.py`**: 여러 제품을 비교하기 위한 비즈니스 로직. 제품 정규화 및 이미지 수집을 통합 처리
-- **`mcp_server.py`**: MCP 프로토콜을 통해 Claude와 통신하는 서버. FastAPI 로직을 MCP Tool로 노출
-- **`mcp_config.json`**: Claude Desktop/Cursor에서 MCP 서버를 등록하기 위한 설정 파일 예시
+- **`mcp_server.py`**: MCP 프로토콜을 통해 Claude Desktop/Cursor와 통신하는 서버 (선택사항). FastAPI 로직을 MCP Tool로 노출
+- **`mcp_config.json`**: Claude Desktop/Cursor에서 MCP 서버를 등록하기 위한 설정 파일 예시 (선택사항)
 
 ## 웹 인터페이스
 
@@ -133,13 +139,17 @@ SW_MCP_Project/
 
 1. **제품 분석**
    - 제품명을 입력하고 분석 유형(일반/상세)을 선택
-   - Claude AI가 제품 이미지와 정보를 바탕으로 상세 분석 제공
+   - **일반 분석**: 핵심 특징, 장단점, 구매 추천을 간결하게 요약
+   - **상세 분석**: 특징/스펙, 디자인, 장점, 단점, 구매 추천을 5가지 항목으로 상세 분석
+   - OpenAI GPT-4.1 mini가 제품 이미지와 정보를 바탕으로 분석
    - 제품명, 모델명, 상세 페이지 링크 및 분석 결과 표시
+   - 분석 결과를 JSON 파일로 자동 저장
 
 2. **제품 비교**
    - 두 개 이상의 제품명을 쉼표로 구분하여 입력
-   - Claude AI가 제품 간 차이점을 중심으로 비교 분석 제공
+   - OpenAI GPT-4.1 mini가 제품 간 차이점을 중심으로 비교 분석
    - 각 제품의 정보와 비교 분석 결과 표시
+   - 비교 분석 결과를 JSON 파일로 자동 저장
 
 ## API 엔드포인트
 
@@ -210,10 +220,10 @@ SW_MCP_Project/
 ### 3. 제품 비교
 **POST** `/compare-products`
 
-### 4. 제품 분석 (OpenAI GPT)
+### 4. 제품 분석 (OpenAI GPT-4.1 mini)
 **POST** `/analyze-product`
 
-OpenAI GPT API를 사용하여 제품을 분석합니다.
+OpenAI GPT-4.1 mini API를 사용하여 제품을 자동으로 분석합니다. 분석 결과를 JSON 파일로 저장합니다.
 
 **Request:**
 ```json
@@ -229,16 +239,17 @@ OpenAI GPT API를 사용하여 제품을 분석합니다.
   "product_name": "삼성 블루스카이 5500",
   "model_name": "AX060CG500G",
   "url": "http://prod.danawa.com/info/...",
-  "analysis": "OpenAI GPT가 생성한 제품 분석 결과...",
+  "analysis": "OpenAI GPT-4.1 mini가 생성한 제품 분석 결과...",
+  "json_file": "analysis_results/제품명_YYYYMMDD_HHMMSS.json",
   "success": true,
   "message": "제품 '삼성 블루스카이 5500' 분석이 완료되었습니다."
 }
 ```
 
-### 5. AI 기반 제품 비교
+### 5. AI 기반 제품 비교 (OpenAI GPT-4.1 mini)
 **POST** `/compare-with-ai`
 
-OpenAI GPT API를 사용하여 여러 제품을 비교 분석합니다.
+OpenAI GPT-4.1 mini API를 사용하여 여러 제품을 자동으로 비교 분석합니다. 분석 결과를 JSON 파일로 저장합니다.
 
 **Request:**
 ```json
@@ -260,7 +271,8 @@ OpenAI GPT API를 사용하여 여러 제품을 비교 분석합니다.
     },
     ...
   ],
-  "comparison_analysis": "OpenAI GPT가 생성한 제품 비교 분석 결과...",
+  "comparison_analysis": "OpenAI GPT-4.1 mini가 생성한 제품 비교 분석 결과...",
+  "json_file": "analysis_results/compare_제품명들_YYYYMMDD_HHMMSS.json",
   "success": true,
   "message": "2개 제품의 비교 분석이 완료되었습니다."
 }
@@ -326,7 +338,7 @@ OpenAI GPT API를 사용하여 여러 제품을 비교 분석합니다.
 
 ### 1. 환경 변수 설정
 
-OpenAI GPT API를 사용하기 위해 `OPENAI_API_KEY` 환경 변수를 설정해야 합니다.
+OpenAI GPT-4.1 mini API를 사용하기 위해 `OPENAI_API_KEY` 환경 변수를 설정해야 합니다.
 
 #### 방법 1: .env 파일 사용 (권장)
 
@@ -372,12 +384,14 @@ uvicorn app.main:app --reload
 서버 실행 후 브라우저에서 `http://localhost:8000`에 접속하면 웹 인터페이스를 사용할 수 있습니다.
 
 **주요 기능:**
-- **제품 분석**: 제품명을 입력하면 OpenAI GPT가 제품을 상세히 분석합니다.
-- **제품 비교**: 두 개 이상의 제품을 입력하면 OpenAI GPT가 차이점을 중심으로 비교 분석합니다.
+- **제품 분석**: 제품명을 입력하면 OpenAI GPT-4.1 mini가 제품을 자동으로 분석합니다. 분석 유형(일반/상세)을 선택할 수 있습니다.
+- **제품 비교**: 두 개 이상의 제품을 입력하면 OpenAI GPT-4.1 mini가 차이점을 중심으로 비교 분석합니다.
+- **JSON 저장**: 모든 분석 결과는 `analysis_results/` 디렉토리에 JSON 파일로 자동 저장됩니다.
 
-### 4. MCP 서버(Claude 연동) 실행
+### 4. MCP 서버(Claude Desktop 연동) - 선택사항
 
-MCP 서버를 사용하면 Claude Desktop 또는 Cursor에서 직접 제품 정보를 분석할 수 있습니다.
+MCP 서버를 사용하면 Claude Desktop 또는 Cursor에서 직접 제품 정보를 분석할 수 있습니다. 
+**이 기능은 선택사항이며, 웹 인터페이스와는 별개로 작동합니다.**
 
 #### 설정 방법
 
@@ -496,15 +510,17 @@ Claude가 자동으로 필요한 MCP Tool을 호출하여 제품 정보를 수�
 
 ### 필수 환경 변수
 
-- `OPENAI_API_KEY`: OpenAI API 키 (웹페이지에서 AI 분석 기능 사용 시 필수)
+- `OPENAI_API_KEY`: OpenAI API 키 (웹 인터페이스에서 GPT-4.1 mini 분석 기능 사용 시 필수)
+  - 발급: https://platform.openai.com/api-keys
+  - `.env` 파일에 추가: `OPENAI_API_KEY=your-api-key-here`
 
 ### 선택적 환경 변수
 
-Claude와 연동 시 이미지 처리 옵션을 환경 변수로 조절할 수 있습니다:
+이미지 처리 옵션을 환경 변수로 조절할 수 있습니다:
 
 - `LLM_IMAGE_MAX_COUNT`: 최대 이미지 개수 (기본값: 4)
-- `LLM_IMAGE_MAX_BYTES`: 최대 이미지 크기 (바이트 단위)
-- `LLM_IMAGE_MAX_DIMENSION`: 최대 이미지 차원 (픽셀 단위)
+- `LLM_IMAGE_MAX_BYTES`: 최대 이미지 크기 (바이트 단위, 기본값: 950000)
+- `LLM_IMAGE_MAX_DIMENSION`: 최대 이미지 차원 (픽셀 단위, 기본값: 1024)
 
 예시:
 ```bash
